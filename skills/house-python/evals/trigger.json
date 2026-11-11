@@ -1,7 +1,7 @@
 [
   {"query": "set up a new python package for the garmin sync with uv, ruff and pyright", "should_trigger": true},
   {"query": "write pytest tests for the hevy client without hitting the real API", "should_trigger": true},
-  {"query": "add a click command to the odev-style CLI that exports workouts as JSON", "should_trigger": true},
+  {"query": "add a click command to our CLI that exports workouts as JSON", "should_trigger": true},
   {"query": "this python function returns success=False and an error string, how should it report failures instead?", "should_trigger": true},
   {"query": "review this python PR, it uses unittest.mock and Optional everywhere", "should_trigger": true},
   {"query": "add SQLAlchemy models for scenes and releases in mediahub", "should_trigger": true},

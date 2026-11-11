@@ -5,7 +5,7 @@
 The house skills hold the coding rules: `house-architecture` and
 {% for l in languages if l != 'rust' %}`house-{{ l }}`{% if not loop.last %}, {% endif %}{% endfor %}, plus `house-otel` for running services.
 This file holds only what an agent cannot discover from the code, the tests and
-the tools. Open work is OneDev issues (`odev issue list --state Open`). Hard
+the tools. {% if forge == 'onedev' %}Open work is OneDev issues (`odev issue list --state Open`).{% else %}Open work is GitHub issues (`gh issue list --state open`).{% endif %} Hard
 decisions are ADRs in `{{ adr_dir }}/`. Domain terms are in `CONTEXT.md`.
 
 ## Project profile
@@ -27,7 +27,13 @@ it current. Where this file and `scripts/gate.md` differ on the gate,
 </important>
 
 <important if="you are opening or describing a pull request">
+{%- if forge == 'onedev' %}
 - The forge is OneDev through `odev`, never `gh`.
 - Run `odev pr template` first. `odev pr create` refuses a description that is
   missing a required section.
+{%- else %}
+- The forge is GitHub through `gh`.
+- Fill in every section of `.github/pull_request_template.md` that applies;
+  Why, Test plan and Verification are required.
+{%- endif %}
 </important>

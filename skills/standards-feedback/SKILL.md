@@ -40,7 +40,8 @@ the rule then names it. More text is the fix only when no tool can check it.
 
 Show the operator one table: each finding, its kind, the change, and the repo.
 Say which findings are project only, so nothing silently changes the
-standards. Then open one PR per repo, on a branch from `main`, through `odev`:
+standards. Then open one PR per repo, on a branch from `main`, through the
+repo's forge CLI, named in its `CLAUDE.md`:
 
 - `agent-skills`: the house skill wording. Each rule complete on its own, with
   no framework named (`skills/CONVENTIONS.md`).

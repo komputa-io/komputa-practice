@@ -25,7 +25,7 @@ if (-not $Apply) { [Console]::Error.WriteLine("dry run; to apply: $PSCommandPath
   and the native-command preference, and `set -u` with `Set-StrictMode`. Bad
   arguments differ: pwsh's binder exits 1 before the script runs.
 - **Keep twins thin.** Past about 100 lines, move the logic into the tool
-  (`odev install`) or into one `uv run --script` file that both call. Two copies
+  (`mytool install`) or into one `uv run --script` file that both call. Two copies
   of logic drift: one `install.ps1` missed ten features added only to its
   `install.sh`.
 

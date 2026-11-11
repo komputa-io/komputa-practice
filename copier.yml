@@ -135,10 +135,20 @@ vault_command:
   type: str
   help: The command that reads a secret on a workstation, for example your password manager's CLI
 
+# Where the repo is hosted. It picks the CI file, the PR template and
+# scripts/forge/<forge>.sh. It comes from your environment file, never a default.
+forge:
+  type: str
+  help: The forge that hosts the repo
+  choices:
+    OneDev: onedev
+    GitHub: github
+
 onedev_project:
   type: str
   help: The OneDev project path, for example team/app
   default: "{{ project_name }}"
+  when: "{{ forge == 'onedev' }}"
 
 # Where each language's project lives, relative to the repo root. Its config
 # files (ruff.toml, Directory.Build.props, tsconfig.json and the rest) go there,

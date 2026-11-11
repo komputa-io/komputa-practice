@@ -2,7 +2,8 @@
 {%- for l in ['python', 'dotnet', 'typescript', 'rust'] if l in languages -%}{%- set _ = langs.append(l) -%}{%- endfor -%}
 #!/usr/bin/env bash
 # Refresh dependencies within their ranges and open a PR. Run weekly by CI
-# ("Update dependencies" in .onedev-buildspec.yml); safe to run by hand.
+# (the "Update dependencies" job); safe to run by hand. scripts/forge/{{ forge }}.sh
+# opens the PR.
 #   scripts/update-deps.sh            refresh, commit to a branch, open a PR
 #   scripts/update-deps.sh --dry-run  refresh and show the diff; commit nothing
 #   scripts/update-deps.sh --refresh-only [--only SECTION ...]
@@ -195,36 +196,15 @@ if [[ "$dry" == 1 ]]; then
   exit 0
 fi
 
-# The PR goes through the OneDev REST API. CI sets these in the buildspec.
-[[ -n "${ODEV_HOST-}" && -n "${ODEV_PROJECT-}" && -n "${ODEV_TOKEN-}" ]] \
-  || die "set ODEV_HOST, ODEV_PROJECT and ODEV_TOKEN to open the PR"
-# api PATH [curl args...]: one OneDev REST call. The token goes in a header
-# read from a file descriptor, so it is on no command line.
-api() {
-  local path=$1
-  shift
-  curl -fsS --max-time 30 -H @<(printf 'Authorization: Bearer %s\n' "$ODEV_TOKEN") "$@" \
-    "${ODEV_HOST%/}/~api/$path"
-}
+# The forge script opens the PR; check its settings before anything is pushed.
+forge=scripts/forge/{{ forge }}.sh
+"$forge" check
 
 branch="chore/update-deps-$(date +%Y-%m-%d)"
 git switch -c "$branch"
 git commit -qam "chore(deps): refresh dependencies within their ranges"
 git push -q -u origin "$branch"
-id=$(api "projects/ids/$ODEV_PROJECT")
-[[ "$id" =~ ^[1-9][0-9]*$ ]] || die "OneDev has no project $ODEV_PROJECT"
-base=$(api "repositories/$id/default-branch")
-[[ "$base" =~ ^[A-Za-z0-9._/-]+$ ]] || die "OneDev gave no usable default branch for $ODEV_PROJECT"
-# The title, the description and both branch names hold no quote or
-# backslash, so they go into the JSON as they are. The \n stay literal: JSON
-# reads them as line breaks.
 title='chore(deps): refresh dependencies within their ranges'
-desc='## Why\n\nThe weekly refresh: newer versions within the declared ranges, each at least seven days old.\n\n## Test plan\n\n- No new tests. The existing gate is the test of a dependency refresh.\n\n## Verification\n\n- CI runs the full gate on this PR. Merge only when it is green.'
-printf -v json '{"targetProjectId": %s, "sourceProjectId": %s, "targetBranch": "%s", "sourceBranch": "%s", "title": "%s", "description": "%s"}' \
-  "$id" "$id" "$base" "$branch" "$title" "$desc"
-# OneDev answers with the pull request's global id; its number is a read away.
-# OneDev pretty-prints JSON with a space before each colon.
-pull=$(printf '%s' "$json" | api pulls -H 'Content-Type: application/json' --data-binary @-)
-[[ "$pull" =~ ^[1-9][0-9]*$ ]] || die "OneDev did not open the PR: $pull"
-number=$(api "pulls/$pull" | sed -n 's/.*"number"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p')
-printf 'update-deps: opened PR #%s from %s\n' "${number:-?}" "$branch"
+desc=$'## Why\n\nThe weekly refresh: newer versions within the declared ranges, each at least seven days old.\n\n## Test plan\n\n- No new tests. The existing gate is the test of a dependency refresh.\n\n## Verification\n\n- CI runs the full gate on this PR. Merge only when it is green.'
+pr=$("$forge" pr-create "$branch" "$title" "$desc")
+printf 'update-deps: opened PR %s from %s\n' "$pr" "$branch"

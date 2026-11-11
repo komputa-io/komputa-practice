@@ -26,7 +26,11 @@ Copier runs through `uvx` with the seven-day cooldown, never a global install.
 `.onedev-buildspec.yml` is seeded once, so `copier update` does not change it.
 A repo whose weekly "Update dependencies" job still has a "Build odev" step must
 delete that step by hand and drop `PATH="$PWD/.git/bin:$PATH"` from its export
-line. `scripts/update-deps.sh` now opens the PR with curl.
+line. `scripts/update-deps.sh` opens the PR through `scripts/forge/<forge>.sh`.
+
+The `forge` answer (`onedev` or `github`, from the environment file) picks the
+CI file, the PR template and the forge script. Only OneDev gets a CI file
+today: a GitHub repo adds its own workflow.
 
 ## What it writes
 
@@ -41,7 +45,9 @@ Seeded once, then the repo's own: `CLAUDE.md`, `CONTEXT.md`, `README.md`,
 Kept in step by `copier update`: everything else. That is the gate
 (`scripts/gate.sh`), the pre-commit hook (`.githooks/pre-commit`, which runs
 `gate.sh --fast`), the weekly dependency refresh (`scripts/update-deps.sh`),
-the PR template (`.onedev/pull-request-template.md`, checked by `odev pr create`),
+the forge script (`scripts/forge/<forge>.sh`), the PR template
+(`.onedev/pull-request-template.md`, checked by `odev pr create`, or
+`.github/pull_request_template.md`),
 `.editorconfig`, `.shellcheckrc`, and each language's lint and build config.
 
 The coding rules themselves live in the house skills in agent-skills. This

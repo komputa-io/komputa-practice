@@ -2,8 +2,8 @@
 
 ```bash
 #!/usr/bin/env bash
-# Build odev from main and install it on PATH. Safe to re-run. Twin: install.ps1.
-#   scripts/install.sh      ODEV_INSTALL_DIR overrides ~/.local/bin
+# Build mytool from main and install it on PATH. Safe to re-run. Twin: install.ps1.
+#   scripts/install.sh      MYTOOL_INSTALL_DIR overrides ~/.local/bin
 set -Eeuo pipefail
 shopt -s inherit_errexit
 trap 'printf "%s: line %d: %s exited %d\n" "${0##*/}" "$LINENO" "$BASH_COMMAND" "$?" >&2' ERR

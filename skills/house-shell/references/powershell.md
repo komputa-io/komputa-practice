@@ -5,7 +5,7 @@
 
 <#
 .SYNOPSIS
-  Build odev from main and install it on PATH. Twin of install.sh; keep the two in step.
+  Build mytool from main and install it on PATH. Twin of install.sh; keep the two in step.
 #>
 [CmdletBinding()]
 param()

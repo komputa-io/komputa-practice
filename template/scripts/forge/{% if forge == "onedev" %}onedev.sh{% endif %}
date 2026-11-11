@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+# The repo's forge actions on OneDev, through its REST API. Managed by the
+# project template; scripts/update-deps.sh calls it.
+#   scripts/forge/onedev.sh check
+#       fail unless ODEV_HOST, ODEV_PROJECT and ODEV_TOKEN are set
+#   scripts/forge/onedev.sh pr-create BRANCH TITLE DESCRIPTION
+#       open a PR from BRANCH into the default branch; print its number
+# CI sets the three variables in .onedev-buildspec.yml.
+set -Eeuo pipefail
+shopt -s inherit_errexit
+trap 'printf "%s: line %d: %s exited %d\n" "${0##*/}" "$LINENO" "$BASH_COMMAND" "$?" >&2' ERR
+die() {
+  printf 'forge: %s\n' "$*" >&2
+  exit 1
+}
+usage() {
+  printf 'usage: scripts/forge/onedev.sh check | pr-create BRANCH TITLE DESCRIPTION\n' >&2
+  exit 2
+}
+
+check() {
+  [[ -n "${ODEV_HOST-}" && -n "${ODEV_PROJECT-}" && -n "${ODEV_TOKEN-}" ]] \
+    || die "set ODEV_HOST, ODEV_PROJECT and ODEV_TOKEN to open the PR"
+}
+
+# api PATH [curl args...]: one OneDev REST call. The token goes in a header
+# read from a file descriptor, so it is on no command line.
+api() {
+  local path=$1
+  shift
+  curl -fsS --max-time 30 -H @<(printf 'Authorization: Bearer %s\n' "$ODEV_TOKEN") "$@" \
+    "${ODEV_HOST%/}/~api/$path"
+}
+
+# json TEXT: TEXT as a JSON string body, without the quotes.
+json() {
+  local s=${1//\\/\\\\}
+  s=${s//\"/\\\"}
+  s=${s//$'\t'/\\t}
+  printf '%s' "${s//$'\n'/\\n}"
+}
+
+pr_create() {
+  local branch=$1 title=$2 desc=$3 id base body pull number
+  check
+  id=$(api "projects/ids/$ODEV_PROJECT")
+  [[ "$id" =~ ^[1-9][0-9]*$ ]] || die "OneDev has no project $ODEV_PROJECT"
+  base=$(api "repositories/$id/default-branch")
+  [[ "$base" =~ ^[A-Za-z0-9._/-]+$ ]] || die "OneDev gave no usable default branch for $ODEV_PROJECT"
+  printf -v body '{"targetProjectId": %s, "sourceProjectId": %s, "targetBranch": "%s", "sourceBranch": "%s", "title": "%s", "description": "%s"}' \
+    "$id" "$id" "$(json "$base")" "$(json "$branch")" "$(json "$title")" "$(json "$desc")"
+  # OneDev answers with the pull request's global id; its number is a read away.
+  # OneDev pretty-prints JSON with a space before each colon.
+  pull=$(printf '%s' "$body" | api pulls -H 'Content-Type: application/json' --data-binary @-)
+  [[ "$pull" =~ ^[1-9][0-9]*$ ]] || die "OneDev did not open the PR: $pull"
+  number=$(api "pulls/$pull" | sed -n 's/.*"number"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p')
+  printf '#%s\n' "${number:-?}"
+}
+
+case "${1-}" in
+  check)
+    (($# == 1)) || usage
+    check
+    ;;
+  pr-create)
+    (($# == 4)) || usage
+    pr_create "$2" "$3" "$4"
+    ;;
+  *) usage ;;
+esac

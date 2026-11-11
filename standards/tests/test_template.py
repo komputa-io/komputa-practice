@@ -79,14 +79,22 @@ COMMON_FILES = [
     ".gitignore",
     ".shellcheckrc",
     ".copier-answers.yml",
-    ".onedev/pull-request-template.md",
-    ".onedev-buildspec.yml",
     ".githooks/pre-commit",
     "scripts/gate.sh",
     "scripts/gate.md",
     "scripts/update-deps.sh",
     ".secrets.baseline",
 ]
+
+# What each forge adds; a render has its own forge's files and no other's.
+FORGE_FILES = {
+    "onedev": [
+        ".onedev/pull-request-template.md",
+        ".onedev-buildspec.yml",
+        "scripts/forge/onedev.sh",
+    ],
+    "github": [".github/pull_request_template.md", "scripts/forge/github.sh"],
+}
 
 
 # A cold uvx start can pass the default 5 s. A test that sets
@@ -99,7 +107,7 @@ SLOW_BUDGETS = {
 
 PROFILE = {"tenants_now": "one", "tenants_later": "one", "users_now": "one", "users_later": "one"}
 # What an environment file gives every repo (instances/example.yml).
-INSTANCE = {"vault_command": "vault-read"}
+INSTANCE = {"vault_command": "vault-read", "forge": "onedev"}
 
 
 def render(dest: Path, languages: list[str], **extra: object) -> Path:
@@ -131,7 +139,7 @@ def render_combo(tmp_path: Path, name: str) -> Path:
 @pytest.mark.parametrize("name", COMBOS)
 def test_each_combination_has_the_common_files_and_only_its_own_bundles(tmp_path, name):
     out = render_combo(tmp_path, name)
-    for f in COMMON_FILES:
+    for f in COMMON_FILES + FORGE_FILES["onedev"]:
         assert (out / f).is_file(), f
     for bundle, files in BUNDLE_FILES.items():
         folder = out / str(EXTRA.get(name, {}).get(BUNDLE_DIR[bundle], "."))
@@ -147,6 +155,7 @@ def test_rendered_scripts_pass_shellcheck_and_shfmt(tmp_path, name):
         out / "scripts/update-deps.sh",
         out / ".githooks/pre-commit",
         *out.glob("scripts/install-cargo-deny.sh"),
+        *out.glob("scripts/forge/*.sh"),
     ]
     subprocess.run(
         ["shellcheck", "--rcfile", str(out / ".shellcheckrc"), *map(str, scripts)], check=True
@@ -1109,8 +1118,16 @@ esac
 """
 
 
-def _refreshable(tmp_path: Path) -> tuple[Path, Path, dict[str, str]]:
-    out = render(tmp_path / "p", ["shell"])
+STUB_GH = r"""#!/usr/bin/env bash
+# Records each call and answers like gh.
+printf '%s\0' "$@" >>"$STUB_LOG/gh"
+[[ "$1 $2" == "pr create" ]] && printf 'https://github.test/team/demo/pull/7\n'
+exit 0
+"""
+
+
+def _refreshable(tmp_path: Path, forge: str = "onedev") -> tuple[Path, Path, dict[str, str]]:
+    out = render(tmp_path / "p", ["shell"], forge=forge)
     _repo(out)
     git(out, "add", "-A")
     git(out, "commit", "-q", "--no-verify", "-m", "init")
@@ -1123,6 +1140,8 @@ def _refreshable(tmp_path: Path) -> tuple[Path, Path, dict[str, str]]:
     stub.mkdir()
     (stub / "curl").write_text(STUB_CURL)
     (stub / "curl").chmod(0o755)
+    (stub / "gh").write_text(STUB_GH)
+    (stub / "gh").chmod(0o755)
     log = tmp_path / "log"
     log.mkdir()
     env = {
@@ -1205,8 +1224,38 @@ def test_the_refresh_refuses_an_answer_it_cannot_use(tmp_path, answer, message):
     out, log, env = _refreshable(tmp_path)
     done = refresh(out, {**env, **answer})
     assert done.returncode == 1
-    assert f"update-deps: {message}\n" in done.stderr
+    assert f"forge: {message}\n" in done.stderr
     assert not (log / "body").exists()
+
+
+def test_a_github_repo_gets_the_github_files_and_no_onedev_ones(tmp_path):
+    out = render(tmp_path / "p", ["shell"], forge="github")
+    for f in FORGE_FILES["github"]:
+        assert (out / f).is_file(), f
+    for f in FORGE_FILES["onedev"]:
+        assert not (out / f).exists(), f
+    assert "`gh`" in (out / "CLAUDE.md").read_text()
+    assert "odev" not in (out / "CLAUDE.md").read_text()
+    script = str(out / "scripts/forge/github.sh")
+    subprocess.run(["shellcheck", "--rcfile", str(out / ".shellcheckrc"), script], check=True)
+    subprocess.run(["shfmt", "-d", "-i", "2", "-ci", "-bn", script], check=True)
+
+
+def test_the_refresh_opens_its_pr_through_gh_on_github(tmp_path):
+    out, log, env = _refreshable(tmp_path, forge="github")
+    done = refresh(out, env)
+    assert done.returncode == 0, done.stdout + done.stderr
+    branch = git(out, "branch", "--show-current")
+    assert git(out, "ls-remote", "origin", branch) != ""
+    calls = (log / "gh").read_text().split("\0")
+    create = calls[calls.index("create") - 1 :]
+    assert create[:4] == ["pr", "create", "--head", branch]
+    assert (
+        create[create.index("--title") + 1]
+        == "chore(deps): refresh dependencies within their ranges"
+    )
+    assert create[create.index("--body") + 1].startswith("## Why\n\nThe weekly refresh")
+    assert f"opened PR https://github.test/team/demo/pull/7 from {branch}" in done.stdout
 
 
 def test_the_full_gate_runs_without_git_and_records_nothing(tmp_path):

@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# The repo's forge actions on GitHub, through the gh CLI. Managed by the
+# project template; scripts/update-deps.sh calls it.
+#   scripts/forge/github.sh check
+#       fail unless gh is on PATH and signed in (GH_TOKEN in CI)
+#   scripts/forge/github.sh pr-create BRANCH TITLE DESCRIPTION
+#       open a PR from BRANCH into the default branch; print its URL
+set -Eeuo pipefail
+shopt -s inherit_errexit
+trap 'printf "%s: line %d: %s exited %d\n" "${0##*/}" "$LINENO" "$BASH_COMMAND" "$?" >&2' ERR
+die() {
+  printf 'forge: %s\n' "$*" >&2
+  exit 1
+}
+usage() {
+  printf 'usage: scripts/forge/github.sh check | pr-create BRANCH TITLE DESCRIPTION\n' >&2
+  exit 2
+}
+
+check() {
+  command -v gh >/dev/null || die "install gh to open the PR"
+  gh auth status >/dev/null 2>&1 || die "sign gh in (or set GH_TOKEN) to open the PR"
+}
+
+pr_create() {
+  check
+  gh pr create --head "$1" --title "$2" --body "$3"
+}
+
+case "${1-}" in
+  check)
+    (($# == 1)) || usage
+    check
+    ;;
+  pr-create)
+    (($# == 4)) || usage
+    pr_create "$2" "$3" "$4"
+    ;;
+  *) usage ;;
+esac
