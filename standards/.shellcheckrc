@@ -1,0 +1,5 @@
+# Managed by project-standards.
+external-sources=true
+source-path=SCRIPTDIR
+enable=check-set-e-suppressed
+enable=require-double-brackets

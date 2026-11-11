@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Refuses a commit whose staged tree holds a private item.
+set -euo pipefail
+exec "$(git rev-parse --show-toplevel)/scripts/scrub-check.sh" --staged

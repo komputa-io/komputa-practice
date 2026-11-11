@@ -1,0 +1,33 @@
+# CLAUDE.md
+
+{{ project_name }}: {{ description }}
+
+The house skills hold the coding rules: `house-architecture` and
+{% for l in languages if l != 'rust' %}`house-{{ l }}`{% if not loop.last %}, {% endif %}{% endfor %}, plus `house-otel` for running services.
+This file holds only what an agent cannot discover from the code, the tests and
+the tools. Open work is OneDev issues (`odev issue list --state Open`). Hard
+decisions are ADRs in `{{ adr_dir }}/`. Domain terms are in `CONTEXT.md`.
+
+## Project profile
+
+- Tenants now: {{ tenants_now }}
+- Tenants later: {{ tenants_later }}
+- Users now: {{ users_now }}
+- Users later: {{ users_later }}
+
+## Project map
+
+<!-- One line per top-level folder: what lives there. -->
+
+<important if="you need to run commands to build, test, lint, run or deploy, or you add a check">
+Read `scripts/gate.md` first: the gate commands, the budgets and the rules for
+this repo's own checks. The template owns that file, and `copier update` keeps
+it current. Where this file and `scripts/gate.md` differ on the gate,
+`scripts/gate.md` is right.
+</important>
+
+<important if="you are opening or describing a pull request">
+- The forge is OneDev through `odev`, never `gh`.
+- Run `odev pr template` first. `odev pr create` refuses a description that is
+  missing a required section.
+</important>

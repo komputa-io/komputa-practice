@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Managed by project-standards. Clears inherited feeds, so the workstation and
+     CI restore from the same sources. -->
+<configuration>
+  <packageSources>
+    <clear />
+    <add key="nuget.org" value="https://api.nuget.org/v3/index.json" />
+{%- if nuget_feed %}
+    <add key="{{ nuget_feed_name }}" value="{{ nuget_feed }}" />
+{%- endif %}
+  </packageSources>
+{%- if nuget_feed %}
+  <!-- The feed's login comes from the environment, never from this file. Set
+       NUGET_{{ nuget_feed_name | upper | replace('-', '_') }}_USERNAME and NUGET_{{ nuget_feed_name | upper | replace('-', '_') }}_PASSWORD (with {{ vault_command }} on a workstation;
+       from the job secrets NUGET_USER and NUGET_TOKEN in CI). -->
+  <packageSourceCredentials>
+    <{{ nuget_feed_name }}>
+      <add key="Username" value="%NUGET_{{ nuget_feed_name | upper | replace('-', '_') }}_USERNAME%" />
+      <add key="ClearTextPassword" value="%NUGET_{{ nuget_feed_name | upper | replace('-', '_') }}_PASSWORD%" />
+    </{{ nuget_feed_name }}>
+  </packageSourceCredentials>
+  <!-- Only these packages come from the feed, and never from nuget.org. -->
+  <packageSourceMapping>
+    <packageSource key="{{ nuget_feed_name }}">
+{%- for p in nuget_feed_packages %}
+      <package pattern="{{ p }}" />
+{%- endfor %}
+    </packageSource>
+    <packageSource key="nuget.org">
+      <package pattern="*" />
+    </packageSource>
+  </packageSourceMapping>
+{%- endif %}
+</configuration>

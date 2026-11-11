@@ -1,0 +1,28 @@
+// Managed by project-standards. Repo additions go in the last array entry.
+import tseslint from "typescript-eslint";
+import comments from "@eslint-community/eslint-plugin-eslint-comments/configs";
+{% if nextjs %}import next from "eslint-config-next/core-web-vitals";
+{% endif %}
+export default tseslint.config(
+{% if nextjs %}  ...next,
+{% endif %}  ...tseslint.configs.recommendedTypeChecked,
+  comments.recommended,
+  {
+    languageOptions: { parserOptions: { projectService: true } },
+    rules: {
+      "@typescript-eslint/no-non-null-assertion": "error",
+      "@typescript-eslint/switch-exhaustiveness-check": "error",
+      "@typescript-eslint/consistent-type-definitions": ["error", "type"],
+      "@typescript-eslint/no-unsafe-type-assertion": "error",
+      "max-lines-per-function": ["error", 60],
+      "@eslint-community/eslint-comments/require-description": "error",
+    },
+  },
+  // Plain JavaScript (eslint.config.mjs, next.config.mjs, *.cjs) is not in
+  // tsconfig.json, so the typed rules cannot run on it.
+  {
+    files: ["**/*.{js,mjs,cjs}"],
+    extends: [tseslint.configs.disableTypeChecked],
+  },
+  { ignores: ["**/generated/**", ".next/**", "dist/**"] },
+);

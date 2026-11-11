@@ -1,0 +1,41 @@
+<!-- Managed by project-standards. Project additions go in src/Directory.Build.props
+     or a project file, which import this one. -->
+<Project>
+  <PropertyGroup>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <AnalysisLevel>latest-all</AnalysisLevel>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+    <NuGetAudit>true</NuGetAudit>
+    <NuGetAuditMode>all</NuGetAuditMode>
+{% if dotnet_lock_files %}    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+{% endif %}    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+    <CentralPackageTransitivePinningEnabled>true</CentralPackageTransitivePinningEnabled>
+  </PropertyGroup>
+  <!-- The use cases live in <App>.Features, which every host calls (house-architecture,
+       "Hosts"). A Features project that references ASP.NET Core could reach an
+       HttpContext or a component, so the build refuses it. -->
+  <Target Name="FeaturesStayHostNeutral" BeforeTargets="CoreCompile"
+          Condition="$(MSBuildProjectName.EndsWith('.Features'))">
+    <ItemGroup>
+      <_HostReference Include="@(FrameworkReference)" Condition="'%(Identity)' == 'Microsoft.AspNetCore.App'" />
+      <_HostReference Include="@(PackageReference)" Condition="$([System.String]::Copy('%(Identity)').StartsWith('Microsoft.AspNetCore'))" />
+    </ItemGroup>
+    <Error Condition="'$(UsingMicrosoftNETSdkWeb)' == 'true' or '$(UsingMicrosoftNETSdkRazor)' == 'true' or '@(_HostReference)' != ''"
+           Text="$(MSBuildProjectName) holds the use cases that every host calls, so it may not use the Web or Razor SDK or reference ASP.NET Core (@(_HostReference)). Put host code in the host project." />
+  </Target>
+  <!-- <App>.Domain holds the entities, IDs, value types and pure rules (house-dotnet,
+       "Slices"). It references Vogen and ErrorOr only, so the build refuses I/O and
+       project references there. -->
+  <Target Name="DomainStaysPure" BeforeTargets="CoreCompile"
+          Condition="$(MSBuildProjectName.EndsWith('.Domain'))">
+    <ItemGroup>
+      <_IoReference Include="@(ProjectReference)" />
+      <_IoReference Include="@(FrameworkReference)" Condition="'%(Identity)' == 'Microsoft.AspNetCore.App'" />
+      <_IoReference Include="@(PackageReference)" Condition="$([System.Text.RegularExpressions.Regex]::IsMatch('%(Identity)', '^(Microsoft\.EntityFrameworkCore|Npgsql|Microsoft\.AspNetCore|Microsoft\.Extensions\.Http|Aspire\.|Dapper|Microsoft\.Data\.)'))" />
+    </ItemGroup>
+    <Error Condition="'$(UsingMicrosoftNETSdkWeb)' == 'true' or '@(_IoReference)' != ''"
+           Text="$(MSBuildProjectName) holds the entities, IDs, value types and pure rules, so it may reference only Vogen and ErrorOr, never I/O or another project (@(_IoReference)). Put data access in Infrastructure." />
+  </Target>
+</Project>

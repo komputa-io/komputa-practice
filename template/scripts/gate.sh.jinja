@@ -1,0 +1,691 @@
+{%- set langs = [] -%}
+{%- for l in ['python', 'dotnet', 'typescript', 'rust'] if l in languages -%}{%- set _ = langs.append(l) -%}{%- endfor -%}
+#!/usr/bin/env bash
+# The gate: every check a change must pass. Safe to re-run. The only gate
+# script in the repo: CI, the hooks and agents all run this one, and
+# the shell section fails while another gate script is tracked.
+#   scripts/gate.sh                   the full checks of the sections that the
+#                                     diff since the merge base touches (docs
+#                                     alone run none); a path that maps to no
+#                                     section runs every section, and so does
+#                                     no merge base or no change. A rerun on a
+#                                     clean tree that already passed exits at once
+#   scripts/gate.sh --full            every section in full: run it before a PR;
+#                                     CI runs it (a non-empty CI variable does
+#                                     the same for the bare command)
+#   scripts/gate.sh --fast            format, lint and secret scan on staged files
+#                                     only; the pre-commit hook runs this (budget:
+#                                     about 5 s)
+#   scripts/gate.sh --size-baseline   write .gate-size-baseline: the tracked files
+#                                     over the size cap of 5,000 tokens. --fast
+#                                     refuses a staged file over the cap, or over
+#                                     its number in that list
+#   scripts/gate.sh [--full | --fast] --only SECTION ...
+#                                     only those sections: {{ (langs + ['shell', 'local']) | join(', ') }}.
+#                                     CI runs each in its own image.
+# The repo's own checks go in scripts/gate.local.sh (the local section), which
+# the repo owns. This script runs it with one argument, full or fast, from the
+# repo root. A failing exit fails the gate. In fast mode, check staged files
+# only and keep to the time budget.
+# Each section writes its duration to .gate/<mode>.<section> (the gate keeps
+# .gate out of git). A section over its budget fails the gate and names its
+# slowest tests or steps. Budgets, in seconds: fast {{ gate_fast_budget }}, full {{ gate_full_budget if gate_full_budget else 'none' }}. A project
+# raises one only with gate_budget_reason in its answers file.
+# A full run prints one line: source lines added against test lines
+# added since the merge base. It never fails on the ratio; see "Tests follow
+# risk" in komputa-practice (rules/working-rules.md).
+# Managed by project-standards: change the template, not this copy.
+set -Eeuo pipefail
+shopt -s inherit_errexit
+trap 'printf "%s: line %d: %s exited %d\n" "${0##*/}" "$LINENO" "$BASH_COMMAND" "$?" >&2' ERR
+die() {
+  printf 'gate: %s\n' "$*" >&2
+  exit 1
+}
+
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$root"
+sections=({{ (langs + ['shell', 'local']) | join(' ') }})
+usage() {
+  printf 'usage: scripts/gate.sh [--full | --fast] [--only SECTION ...]\n       scripts/gate.sh --size-baseline\nsections: %s\n' "${sections[*]}" >&2
+  exit 2
+}
+mode=full
+explicit_full=
+only=()
+while (($# > 0)); do
+  case "$1" in
+    --full)
+      [[ "$mode" == full ]] || usage
+      explicit_full=1
+      ;;
+    --fast)
+      [[ -z "$explicit_full" && "$mode" != size ]] || usage
+      mode=fast
+      ;;
+    --size-baseline)
+      [[ -z "$explicit_full" && "$mode" == full ]] || usage
+      mode=size
+      ;;
+    --only)
+      (($# > 1)) || usage
+      only+=("$2")
+      shift
+      ;;
+    --only=*) only+=("${1#--only=}") ;;
+    # A bare section name works too, as in the first hand-adapted gates.
+    {{ (langs + ['shell', 'local']) | join(' | ') }}) only+=("$1") ;;
+    *) usage ;;
+  esac
+  shift
+done
+# want[SECTION] is set for each section this run includes; no --only means all.
+chosen=${only[*]}
+[[ -n "$chosen" ]] || only=("${sections[@]}")
+declare -A want=()
+for s in "${only[@]}"; do
+  [[ " ${sections[*]} " == *" $s "* ]] || usage
+  want[$s]=1
+done
+
+{%- if langs %}
+# Each language's project folder, relative to the repo root.
+{%- if 'python' in langs %}
+python_dir='{{ python_dir }}'
+{%- endif %}{% if 'dotnet' in langs %}
+dotnet_dir='{{ dotnet_dir }}'
+{%- endif %}{% if 'typescript' in langs %}
+node_dir='{{ node_dir }}'
+{%- endif %}{% if 'rust' in langs %}
+rust_dir='{{ rust_dir }}'
+{%- endif %}
+{%- endif %}
+
+# The merge base that the bare command compares with: GATE_BASE
+# (default origin's default branch, else main). Empty when there is none, or
+# in a fast run, which reads no diff.
+base=
+ref=${GATE_BASE-}
+if [[ "$mode" != fast ]]; then
+  if [[ -z "$ref" ]]; then
+    ref=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null) || ref=main
+  fi
+  base=$(git merge-base HEAD "$ref" 2>/dev/null) || base=
+fi
+
+# section_of PATH: the sections that a change to PATH can break, or "none" for
+# a path no section reads (docs), or "?" for a path with no safe mapping.
+section_of() {
+  local p=$1 name=${1##*/}
+{%- for l, d in [('python', 'python_dir'), ('dotnet', 'dotnet_dir'), ('typescript', 'node_dir'), ('rust', 'rust_dir')] if l in langs %}
+  [[ "{{ '$' ~ d }}" == . || "$p" != "{{ '$' ~ d }}"/* ]] || {
+    printf '%s\n' {{ l }}
+    return
+  }
+{%- endfor %}
+  case "$name" in
+{%- if 'python' in langs %}
+    *.py | pyproject.toml | uv.lock | uv.toml | ruff.toml | pyrightconfig.json | pytest.toml)
+      printf 'python\n'
+      return
+      ;;
+{%- endif %}{% if 'dotnet' in langs %}
+    *.cs | *.csproj | *.props | *.targets | *.razor | *.cshtml | *.resx | *.sln | *.slnx | global.json | packages.lock.json | nuget.config | dotnet-tools.json)
+      printf 'dotnet\n'
+      return
+      ;;
+{%- endif %}{% if 'typescript' in langs %}
+    *.ts | *.tsx | *.js | *.jsx | *.mjs | *.cjs | package.json | package-lock.json | tsconfig*.json | .prettierrc* | .npmrc | eslint.config.* | vitest.config.*)
+      printf 'typescript\n'
+      return
+      ;;
+{%- endif %}{% if 'rust' in langs %}
+    *.rs | Cargo.toml | Cargo.lock | deny.toml | rust-toolchain.toml | clippy.toml | rustfmt.toml | .rustfmt.toml)
+      printf 'rust\n'
+      return
+      ;;
+{%- endif %}
+    *.sh | *.bash | .shellcheckrc)
+      printf 'shell\n'
+      return
+      ;;
+    gate | check | ci | quality | gate.* | check.* | ci.* | quality.*)
+      printf 'shell\n'
+      return
+      ;;
+    *.md | LICENSE*)
+      printf 'none\n'
+      return
+      ;;
+  esac
+  case "$p" in
+    .githooks/* | bin/* | scripts/*) printf 'shell\n' ;;
+    docs/*{% if not adr_dir.startswith('docs/') %} | {{ adr_dir }}/*{% endif %}) printf 'none\n' ;;
+    *) printf '?\n' ;;
+  esac
+}
+
+# The bare command checks the sections that the diff touches, in full. A run
+# with --full, --only, --fast or CI set checks what it names.
+scope=
+if [[ "$mode" == full && -z "$chosen" && -z "$explicit_full" && -z "${CI-}" ]]; then
+  if [[ -z "$base" ]]; then
+    printf 'gate: scope: every section, because there is no merge base with %s (set GATE_BASE)\n' "$ref"
+  else
+    paths=$({
+      git diff --name-only --no-renames "$base" -- ':/'
+      git ls-files --others --exclude-standard --full-name -- ':/'
+    } | sort -u)
+    declare -A hit=()
+    unmapped=
+    n=0
+    while IFS= read -r p; do
+      [[ -n "$p" ]] || continue
+      n=$((n + 1))
+      for m in $(section_of "$p"); do
+        case "$m" in
+          none) ;;
+          '?') [[ -n "$unmapped" ]] || unmapped=$p ;;
+          *) hit[$m]=1 ;;
+        esac
+      done
+    done <<<"$paths"
+    if ((n == 0)); then
+      printf 'gate: scope: every section, because nothing changed since %s\n' "$ref"
+    elif [[ -n "$unmapped" ]]; then
+      printf 'gate: scope: every section, because no section covers %s\n' "$unmapped"
+    elif [[ -z "${hit[*]-}" ]]; then
+      printf 'gate: scope: no section; %d changed path(s) since %s are docs. Run scripts/gate.sh --full to check everything\n' "$n" "$ref"
+      exit 0
+    else
+      # The repo's own checks run beside any section: they may read any file.
+      hit[local]=1
+      want=()
+      for s in "${sections[@]}"; do
+        [[ -z "${hit[$s]-}" ]] || {
+          want[$s]=1
+          scope+="${scope:+ }$s"
+        }
+      done
+      printf 'gate: scope: %s (%d changed path(s) since %s). Run scripts/gate.sh --full to check everything\n' "$scope" "$n" "$ref"
+    fi
+  fi
+fi
+
+# tree_key: the clean tree and the sections this run checks, or nothing when
+# the working tree has changes (untracked files too: ruff and pytest read them).
+tree_key() {
+  local tree s key
+  [[ -z "$(git status --porcelain)" ]] || return 0
+  tree=$(git rev-parse -q --verify 'HEAD^{tree}') || return 0
+  key=$tree
+  for s in "${sections[@]}"; do
+    [[ -z "${want[$s]-}" ]] || key+=" $s"
+  done
+  printf '%s\n' "$key"
+}
+
+# A full run on a clean tree that already passed these sections has nothing new
+# to check. CI checks out fresh, so it never skips. Without git (a CI image may
+# have none) there is no tree to key on, so the gate runs in full.
+checked=
+if [[ "$mode" == full ]] && passed=$(git rev-parse --git-path gate-passed 2>/dev/null); then
+  checked=$(tree_key)
+  if [[ -n "$checked" && -f "$passed" && "$(<"$passed")" == "$checked" ]]; then
+    printf 'gate: tree %s already passed %s; nothing changed. Delete %s to run it again\n' \
+      "${checked%% *}" "${checked#* }" "$passed"
+    exit 0
+  fi
+fi
+
+# Tools not in a lock file run through uvx with the seven-day cooldown.
+uvx_tool() {
+  uvx --quiet --exclude-newer "7 days" "$@"
+}
+
+# Section budgets, in seconds; 0 means none. A section that runs over its
+# budget fails the gate once it has finished (the budget is not a timeout).
+budget_fast={{ gate_fast_budget }}
+budget_full={{ gate_full_budget }}
+gate_dir=$root/.gate
+section=
+section_start=0
+steps=
+
+# gate_ignore DIR: keep everything in DIR out of git.
+gate_ignore() {
+  mkdir -p "$1"
+  [[ "$(cat "$1/.gitignore" 2>/dev/null)" == '*' ]] || printf '*\n' >"$1/.gitignore"
+}
+
+# section_begin NAME: start the clock for one section. .gate holds its own
+# .gitignore, so no repo needs a line in its own .gitignore for it.
+section_begin() {
+  section=$1
+  section_start=$SECONDS
+  mkdir -p "$gate_dir"
+  gate_ignore "$gate_dir"
+  steps=$gate_dir/$mode.$section.steps
+  : >"$steps"
+}
+
+# timed LABEL COMMAND...: run COMMAND and note how long it took, so a section
+# over budget can name its slowest steps. Returns COMMAND's status.
+timed() {
+  local label=$1 t=$SECONDS rc=0
+  shift
+  "$@" || rc=$?
+  printf '%d\t%s\n' "$((SECONDS - t))" "$label" >>"$steps"
+  return "$rc"
+}
+
+# section_end: record the section's duration in .gate/<mode>.<section> and fail
+# when it is over its budget.
+section_end() {
+  local took=$((SECONDS - section_start)) limit=0
+  printf '%d\n' "$took" >"$gate_dir/$mode.$section"
+  case "$mode" in
+    fast) limit=$budget_fast ;;
+    full) limit=$budget_full ;;
+  esac
+  if ((limit > 0 && took > limit)); then
+    printf 'gate: the %s section took %d s; its %s budget is %d s\n' "$section" "$took" "$mode" "$limit" >&2
+    if [[ "$section" == python ]]; then
+      printf 'gate: the slowest tests are in the "slowest durations" list that pytest printed above\n' >&2
+    elif [[ -s "$steps" ]]; then
+      printf 'gate: its slowest steps:\n' >&2
+      sort -rn "$steps" | head -n 5 | sed 's/^/  /' >&2
+    else
+      printf 'gate: no per-test times for this section; run its test command with the runner'"'"'s own timing option\n' >&2
+    fi
+    printf 'gate: make it faster, or raise the budget with gate_budget_reason in .copier-answers.yml\n' >&2
+    exit 1
+  fi
+}
+
+# staged <pattern...>: staged files (added, copied, modified) matching the
+# globs, under the current folder and relative to it.
+staged() {
+  git diff --cached --name-only --relative --diff-filter=ACM -- "$@"
+}
+
+# The tools read the file on disk, not the staged content. A staged file with
+# more changes on disk would be checked as it is on disk, and the commit would
+# take the other content. Refuse it: the gate must not answer for a file that
+# it did not read.
+if [[ "$mode" == fast ]]; then
+  partly=$(comm -12 <(git diff --cached --name-only --diff-filter=ACM | sort) <(git diff --name-only | sort))
+  if [[ -n "$partly" ]]; then
+    printf 'gate: staged, with more changes on disk: %s\n' "${partly//$'\n'/, }" >&2
+    die "the gate reads the file on disk, so it cannot check what this commit takes. Stage the rest (git add), or set it aside (git stash push --keep-index), then commit again"
+  fi
+fi
+
+# The file size cap. A large file costs tokens on every later call of an agent
+# that read it, so a staged file may hold at most $size_cap tokens (bytes / 4).
+# .gate-size-baseline lists the files that were over the cap when the repo
+# took up the check, as "<tokens> <path>" lines. A listed file may shrink and
+# never grow, and it leaves the list when it is under the cap.
+# scripts/gate.sh --size-baseline writes the list from the tracked files.
+size_cap=5000
+size_list=.gate-size-baseline
+
+# size_counted PATH: true for a file that the cap covers. Lock files, generated
+# code, test data, the files that the template manages and binary files are
+# not covered.
+size_counted() {
+  case "$1" in
+    *.lock | *-lock.json | *-lock.yaml | *packages.lock.json | *.min.js | *.min.css | *.map | *.snap | *.g.cs | *.generated.* | *.Designer.cs) return 1 ;;
+    fixtures/* | */fixtures/* | __fixtures__/* | */__fixtures__/* | testdata/* | */testdata/* | */__snapshots__/*) return 1 ;;
+    scripts/gate.sh | scripts/update-deps.sh | .secrets.baseline | .gate-size-baseline) return 1 ;;
+    *) ;;
+  esac
+  # grep -I finds no line in a binary file, or in an empty one.
+  grep -Iq . -- "$1"
+}
+
+# size_tokens PATH: its size in tokens, rounded up.
+size_tokens() {
+  local bytes
+  bytes=$(wc -c <"$1")
+  printf '%d\n' $(((bytes + 3) / 4))
+}
+
+if [[ "$mode" == size ]]; then
+  found=
+  while IFS= read -r f; do
+    [[ -f "$f" ]] || continue
+    # shellcheck disable=SC2310 # the status is the answer.
+    size_counted "$f" || continue
+    tokens=$(size_tokens "$f")
+    ((tokens <= size_cap)) || found+="$tokens $f"$'\n'
+  done < <(git ls-files)
+  printf '%s' "$found" >"$size_list"
+  printf 'gate: wrote %s: %d file(s) over %d tokens\n' "$size_list" "$(grep -c . "$size_list" || true)" "$size_cap"
+  exit 0
+fi
+
+if [[ "$mode" == fast ]]; then
+  declare -A listed=()
+  if [[ -f "$size_list" ]]; then
+    while read -r tokens f; do
+      [[ ! "$tokens" =~ ^[0-9]+$ || -z "$f" ]] || listed[$f]=$tokens
+    done <"$size_list"
+  fi
+  over=0
+  smaller=0
+  while IFS= read -r f; do
+    [[ -n "$f" && -f "$f" ]] || continue
+    # shellcheck disable=SC2310 # the status is the answer.
+    size_counted "$f" || continue
+    tokens=$(size_tokens "$f")
+    limit=${listed[$f]:-$size_cap}
+    if ((tokens > limit)); then
+      printf 'gate: %s is %d tokens (bytes / 4); its limit is %d\n' "$f" "$tokens" "$limit" >&2
+      over=$((over + 1))
+    elif [[ -n "${listed[$f]-}" ]] && ((tokens < limit)); then
+      # 0 takes a file that is now under the cap off the list.
+      listed[$f]=$((tokens > size_cap ? tokens : 0))
+      smaller=1
+    fi
+  done < <(staged)
+  if ((over > 0)); then
+    printf 'gate: split it: one module for each concern, and tests in their own file (house-architecture, large files)\n' >&2
+    die "$over staged file(s) over the size cap. A file that cannot be split goes in $size_list as '<tokens> <path>', in a reviewed PR"
+  fi
+  if ((smaller)); then
+    for f in "${!listed[@]}"; do
+      ((listed[$f] == 0)) || printf '%d %s\n' "${listed[$f]}" "$f"
+    done | sort -k2 >"$size_list"
+    git add -- "$size_list"
+    printf 'gate: staged the updated %s (a listed file is smaller)\n' "$size_list"
+  fi
+fi
+
+# The secret scan, on every staged file. .secrets.baseline holds the findings
+# already reviewed.
+if [[ "$mode" == fast ]]; then
+  files=$(staged)
+  if [[ -n "$files" ]]; then
+    mapfile -t list <<<"$files"
+    scan=(uvx --quiet --exclude-newer "7 days" --from detect-secrets detect-secrets-hook)
+    # A OneDev reference such as @secret:NAME@ names a job secret; it is not one.
+    # The baseline's line filter holds this pattern and any the repo adds. Pass
+    # it only without a baseline: --exclude-lines replaces that filter.
+    secret_refs=(--exclude-lines '@secret:[A-Za-z0-9_.-]+@')
+    if [[ -f .secrets.baseline ]]; then
+      before=$(git hash-object .secrets.baseline)
+      if ! "${scan[@]}" --baseline .secrets.baseline "${list[@]}"; then
+        # The hook fails once when it only moves known findings' line numbers
+        # in the baseline. Stage that rewrite and scan again; a new finding
+        # fails twice. Compare the content, not git diff: the baseline may not
+        # be tracked yet.
+        if [[ "$(git hash-object .secrets.baseline)" != "$before" ]] && git add .secrets.baseline \
+          && "${scan[@]}" --baseline .secrets.baseline "${list[@]}"; then
+          printf 'gate: staged the updated .secrets.baseline (line numbers moved)\n'
+        else
+          die "possible secret in a staged file; read it with {{ vault_command }} instead"
+        fi
+      fi
+    else
+      printf 'gate: no .secrets.baseline, so no finding counts as reviewed. Create it:\n' >&2
+      printf "  uvx --exclude-newer '7 days' --from detect-secrets detect-secrets scan --exclude-lines '@secret:[A-Za-z0-9_.-]+@' > .secrets.baseline\n" >&2
+      "${scan[@]}" "${secret_refs[@]}" "${list[@]}" || die "possible secret in a staged file; read it with {{ vault_command }} instead"
+    fi
+  fi
+fi
+{%- if 'python' in langs %}
+
+# Python, in $python_dir. Dev tools sit in an extra or a group: install both.
+if [[ -n "${want[python]-}" ]]; then
+  section_begin python
+  cd "$root/$python_dir"
+  run=(uv run --locked --all-extras --all-groups)
+  # A run of the whole suite uses every core when the repo locks pytest-xdist.
+  # Cap it with --maxprocesses in pytest.toml's addopts.
+  workers=()
+  if grep -qx 'name = "pytest-xdist"' uv.lock; then
+    workers=(-n auto)
+  fi
+  case "$mode" in
+    fast)
+      py=$(staged '*.py')
+      if [[ -n "$py" ]]; then
+        mapfile -t list <<<"$py"
+        # --force-exclude, or ruff checks a named file that ruff.toml excludes.
+        "${run[@]}" ruff format --check --force-exclude "${list[@]}"
+        "${run[@]}" ruff check --force-exclude "${list[@]}"
+      fi
+      ;;
+    full)
+      "${run[@]}" ruff format --check .
+      "${run[@]}" ruff check .
+      "${run[@]}" pyright --warnings
+      [[ ! -f .importlinter ]] || "${run[@]}" lint-imports
+      rc=0
+      "${run[@]}" pytest --durations=5 --durations-min=0.5 "${workers[@]}" || rc=$?
+      # 5: pytest collected no tests, as in a repo that has none yet.
+      ((rc != 5)) || printf 'gate: python: pytest collected no tests\n'
+      ((rc == 0 || rc == 5)) || exit "$rc"
+      ;;
+  esac
+  cd "$root"
+  section_end
+fi
+{%- endif %}{% if 'dotnet' in langs %}
+
+# .NET, in $dotnet_dir (the folder with the solution).
+if [[ -n "${want[dotnet]-}" ]]; then
+  section_begin dotnet
+  cd "$root/$dotnet_dir"
+  case "$mode" in
+    fast)
+      cs=$(staged '*.cs')
+      if [[ -n "$cs" ]]; then
+        mapfile -t list <<<"$cs"
+        # --folder: whitespace needs no restore, so it fits the time budget.
+        dotnet format whitespace . --folder --verify-no-changes --include "${list[@]}"
+      fi
+      ;;
+    full)
+      dotnet tool restore
+      dotnet restore{% if dotnet_lock_files %} --locked-mode{% endif %}
+      dotnet format --verify-no-changes --no-restore
+      dotnet build --no-restore
+      timed 'dotnet test' dotnet test --no-build
+      ;;
+  esac
+  cd "$root"
+  section_end
+fi
+{%- endif %}{% if 'typescript' in langs %}
+
+# TypeScript, in $node_dir (the folder with package.json). Run npm ci there first.
+if [[ -n "${want[typescript]-}" ]]; then
+  section_begin typescript
+  cd "$root/$node_dir"
+  case "$mode" in
+    fast)
+      ts=$(staged '*.ts' '*.tsx' '*.js' '*.jsx' '*.mjs' '*.cjs')
+      if [[ -n "$ts" ]]; then
+        mapfile -t list <<<"$ts"
+        npx --no-install prettier --check "${list[@]}"
+        npx --no-install eslint --max-warnings 0 "${list[@]}"
+      fi
+      ;;
+    full)
+      [[ -d node_modules ]] || die "$node_dir/node_modules is missing; run npm ci there first"
+      npx --no-install tsc --noEmit
+      npx --no-install eslint --max-warnings 0 .
+      npx --no-install prettier --check .
+      timed vitest npx --no-install vitest run
+      ;;
+  esac
+  cd "$root"
+  section_end
+fi
+{%- endif %}{% if 'rust' in langs %}
+
+# Rust, in $rust_dir (the folder with Cargo.toml). rust-toolchain.toml there
+# pins the toolchain, so a RUSTUP_TOOLCHAIN from the caller must not override it.
+if [[ -n "${want[rust]-}" ]]; then
+  section_begin rust
+  cd "$root/$rust_dir"
+  unset RUSTUP_TOOLCHAIN
+  case "$mode" in
+    fast)
+      rs=$(staged '*.rs')
+      if [[ -n "$rs" ]]; then
+        mapfile -t list <<<"$rs"
+        # rustfmt alone takes edition 2015; Cargo.toml names the real one.
+        edition=
+        [[ ! -f Cargo.toml ]] || edition=$(sed -n '/^edition *= *"[0-9]*"/{s/^edition *= *"\([0-9]*\)".*/\1/p;q}' Cargo.toml)
+        bad=
+        for f in "${list[@]}"; do
+          # On stdin rustfmt formats this file only, not the modules it declares.
+          cmp -s "$f" <(rustfmt --edition "${edition:-2021}" --emit stdout <"$f" 2>/dev/null) || bad+="  $f"$'\n'
+        done
+        if [[ -n "$bad" ]]; then
+          printf 'gate: rustfmt would change these staged files; run cargo fmt --all and stage them:\n%s' "$bad" >&2
+          exit 1
+        fi
+      fi
+      ;;
+    full)
+      cargo fmt --all --check
+      timed clippy cargo clippy --locked --all-targets -- -D warnings
+      timed 'cargo deny' cargo deny --locked check
+      timed 'cargo test' cargo test --locked
+      ;;
+  esac
+  cd "$root"
+  section_end
+fi
+{%- endif %}
+
+# Shell scripts, in every repo: *.sh and *.bash, plus files without an
+# extension in .githooks/, bin/ and scripts/ whose shebang names a shell. A
+# Python script in bin/ is not shell. The section also fails while a second
+# gate script is tracked.
+if [[ -n "${want[shell]-}" ]]; then
+  section_begin shell
+  # Vendored or retired folders, kept as they are (the shell_exclude answer):
+  # no lint, and a gate script there is not a second gate.
+  skip=({% for d in shell_exclude %}':!{{ d }}/'{% if not loop.last %} {% endif %}{% endfor %})
+  shebang='^#!.*[/ ](ba|da|k|z)?sh([[:space:]]|$)'
+
+  # One gate: a repo's old gate script folds into scripts/gate.local.sh. A
+  # gate script under a fixtures, __fixtures__, tests, test, spec or testdata folder is test data, and
+  # scripts/gate.ps1 may be the PowerShell twin of scripts/gate.sh. First, so
+  # a lint error in an old gate does not hide this message.
+  old_gate='^(gate|check|ci|quality)(\.(sh|bash|ps1))?$'
+  not_tests=(':(exclude,glob)**/fixtures/**' ':(exclude,glob)**/__fixtures__/**' ':(exclude,glob)**/tests/**'
+    ':(exclude,glob)**/test/**' ':(exclude,glob)**/spec/**' ':(exclude,glob)**/testdata/**')
+  case "$mode" in
+    # R too: a staged rename of an old gate is still one.
+    fast) candidates=$(git diff --cached --name-only --relative --diff-filter=ACMR -- "${skip[@]}" "${not_tests[@]}") ;;
+    full) candidates=$(git ls-files -- "${skip[@]}" "${not_tests[@]}") ;;
+  esac
+  hits=0
+  while IFS= read -r f; do
+    [[ -f "$f" ]] || continue
+    # Fold case on the file name only: Gate.ps1 and CI.sh count, and
+    # Scripts/Gate.ps1 is not the twin.
+    name=${f##*/}
+    name=${name,,}
+    [[ "$name" =~ $old_gate && "$f" != scripts/gate.sh && "$f" != scripts/gate.ps1 ]] || continue
+    # A bare name such as docs/ci is a script only when its shebang names a shell.
+    [[ "$name" == *.* ]] || head -n 1 -- "$f" | grep -Eq "$shebang" || continue
+    # The whole path, so app/gate.sh does not match a call to scripts/gate.sh.
+    path=$(printf '%s' "$f" | sed 's/[][\\.*^$+?(){}|]/\\&/g')
+    callers=$(git grep -l -E -e "(^|[^A-Za-z0-9_./-])(\./)?$path([^A-Za-z0-9_./-]|$)" \
+      -- .onedev-buildspec.yml '.github/workflows/*' .gitlab-ci.yml '.githooks/*' || true)
+    printf 'gate: %s is a second gate script; fold its checks into scripts/gate.local.sh and remove it%s\n' \
+      "$f" "${callers:+ (called from: ${callers//$'\n'/, })}" >&2
+    hits=$((hits + 1))
+  done <<<"$candidates"
+  ((hits == 0)) || exit 1
+
+  shell_files=('*.sh' '*.bash' '.githooks/*' 'bin/*' 'scripts/*' "${skip[@]}")
+  case "$mode" in
+    fast) candidates=$(staged "${shell_files[@]}") ;;
+    full) candidates=$(git ls-files -- "${shell_files[@]}") ;;
+  esac
+  list=()
+  n=0
+  while IFS= read -r f; do
+    [[ -n "$f" && -f "$f" ]] || continue
+    case "${f##*/}" in
+      *.sh | *.bash) list+=("$f") n=$((n + 1)) ;;
+      *.*) ;;
+      *) if head -n 1 -- "$f" | grep -Eq "$shebang"; then list+=("$f") n=$((n + 1)); fi ;;
+    esac
+  done <<<"$candidates"
+  if ((n > 0)); then
+    timed shellcheck uvx_tool --from shellcheck-py shellcheck "${list[@]}"
+    # --apply-ignore: honour .editorconfig `ignore = true` too.
+    timed shfmt uvx_tool --from shfmt-py shfmt --apply-ignore -d "${list[@]}"
+  fi
+  section_end
+fi
+
+# The repo's own checks, if it has any: scripts/gate.local.sh full|fast.
+if [[ -n "${want[local]-}" ]]; then
+  section_begin local
+  if [[ -f scripts/gate.local.sh ]]; then
+    timed gate.local.sh bash scripts/gate.local.sh "$mode"
+  elif [[ -n "$chosen" ]]; then
+    printf 'gate: no scripts/gate.local.sh; the local section has nothing to run\n'
+  fi
+  section_end
+fi
+
+# test_lines: one line, source lines added against test lines added since the
+# merge base. It reports and never fails: the operator sets the budget. A test
+# file is one named like a test, or under a tests, test or __tests__ folder, a
+# *.Tests folder, or one under a folder of the test_folders answer. Source is the other code files (py, cs,
+# ts, tsx, js, mjs, sh, ps1). Docs, locks and data count as neither.
+test_lines() {
+  local add path src=0 tst=0 f ratio
+  [[ -n "$base" ]] || return 0
+  while IFS=$'\t' read -r add _ path; do
+    [[ "$add" =~ ^[0-9]+$ ]] || continue
+    case "$path" in
+      */tests/* | tests/* | */test/* | test/* | */__tests__/* | */*.Tests/* | *.Tests/* | *Tests.cs | *Test.cs | test_*.py | */test_*.py | *_test.py | *.test.* | *.spec.*{% for d in test_folders %} | {{ d }}/*{% endfor %}) tst=$((tst + add)) ;;
+      *.py | *.cs | *.ts | *.tsx | *.js | *.mjs | *.sh | *.ps1) src=$((src + add)) ;;
+      *) ;;
+    esac
+  done < <(
+    git diff --numstat --no-renames "$base" --
+    while IFS= read -r f; do
+      printf '%d\t0\t%s\n' "$(wc -l <"$f")" "$f"
+    done < <(git ls-files --others --exclude-standard)
+  )
+  ((src + tst > 0)) || return 0
+  if ((src > 0)); then
+    ratio=$(awk -v t="$tst" -v s="$src" 'BEGIN { printf "%.2f", t / s }')
+    printf 'gate: test lines: +%d source, +%d test against %s (%s test lines for each source line)\n' "$src" "$tst" "${base:0:7}" "$ratio"
+  else
+    printf 'gate: test lines: +0 source, +%d test against %s\n' "$tst" "${base:0:7}"
+  fi
+}
+
+if [[ "$mode" != fast ]]; then
+  test_lines
+fi
+
+case "$mode" in
+  fast) printf 'gate --fast: passed\n' ;;
+  full)
+    # Only when the tree is still the one that was checked.
+    if [[ -n "$checked" ]]; then
+      now=$(tree_key)
+      [[ "$now" != "$checked" ]] || printf '%s\n' "$checked" >"$passed"
+    fi
+    if [[ -n "$scope" ]]; then
+      printf 'gate: passed %s; run scripts/gate.sh --full before a PR\n' "$scope"
+    else
+      printf 'gate: every check passed\n'
+    fi
+    ;;
+esac

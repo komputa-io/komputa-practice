@@ -1,0 +1,9 @@
+.claude/settings.local.json
+.claude/worktrees/
+scratch/
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+*.egg-info/

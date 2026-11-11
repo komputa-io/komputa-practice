@@ -1,0 +1,303 @@
+# The project template: starts and updates a repo with the house standards.
+# Run Copier through uvx with the seven-day cooldown, never a global install, and
+# pass your environment file (see instances/example.yml):
+#   uvx --exclude-newer "7 days" copier copy --data-file <environment.yml> <this repo's URL> <repo>
+#   uvx --exclude-newer "7 days" copier update --data-file <environment.yml>   (inside a repo)
+_min_copier_version: "9.18"
+_subdirectory: template
+_answers_file: .copier-answers.yml
+# Seeded once: the repo owns these after the first copy. Every other file stays
+# with the template and `copier update` merges changes into it.
+_skip_if_exists:
+  - CLAUDE.md
+  - CONTEXT.md
+  - README.md
+  - "{{ adr_dir }}/README.md"
+  - .gitignore
+  - .onedev-buildspec.yml
+  - global.json
+  - Directory.Packages.props
+  # No slash at the start, so each one matches in a project folder too.
+  - "**/.config/dotnet-tools.json"
+  - tsconfig.json
+  - next.config.ts
+  - .secrets.baseline
+  - pyproject.toml
+  - deny.toml
+  - rust-toolchain.toml
+_tasks:
+  # A new project gets a git repo; an existing one keeps its own.
+  - command: git rev-parse --git-dir >/dev/null 2>&1 || git init -q -b main
+    when: "{{ _copier_operation == 'copy' }}"
+  # Switch the hooks on. In a linked worktree, set them for this worktree only:
+  # the shared config would switch them on in the main checkout and every other
+  # worktree too. A repo that already has its own hooks path keeps it.
+  - command: |
+      set -e
+      # --worktree fails, with a "fatal:" line, until extensions.worktreeConfig
+      # is on; that only means no worktree value yet.
+      cur=$(git config --worktree --get core.hooksPath 2>/dev/null || git config --local --get core.hooksPath || true)
+      if [ -n "$cur" ] && [ "$cur" != .githooks ]; then
+        echo "project-standards: core.hooksPath is already '$cur'; left alone. The template's hooks are in .githooks."
+      elif [ "$(git rev-parse --path-format=absolute --git-dir)" != "$(git rev-parse --path-format=absolute --git-common-dir)" ]; then
+        git config extensions.worktreeConfig true
+        git config --worktree core.hooksPath .githooks
+      else
+        git config core.hooksPath .githooks
+      fi
+    when: "{{ _copier_operation == 'copy' }}"
+  # CLAUDE.md is seeded once, so an older repo's copy does not name the gate
+  # instructions that the template owns. Add the pointer once; change no other
+  # line of the repo's file.
+  - command: |
+      set -e
+      if [ -f CLAUDE.md ] && ! grep -qF 'scripts/gate.md' CLAUDE.md; then
+        cat >>CLAUDE.md <<'POINTER'
+
+      <important if="you need to run commands to build, test, lint, run or deploy, or you add a check">
+      Read `scripts/gate.md` first: the gate commands, the budgets and the rules for
+      this repo's own checks. The template owns that file, and `copier update` keeps
+      it current. Where this file and `scripts/gate.md` differ on the gate,
+      `scripts/gate.md` is right.
+      </important>
+      POINTER
+        echo "project-standards: added the pointer to scripts/gate.md to CLAUDE.md"
+      fi
+  # The secret scan's baseline: what is already in the repo and was reviewed.
+  - command: test -f .secrets.baseline || uvx --quiet --exclude-newer "7 days" --from detect-secrets detect-secrets scan --exclude-lines '@secret:[A-Za-z0-9_.-]+@' > .secrets.baseline
+    when: "{{ _copier_operation == 'copy' }}"
+  # A new Python project starts with its lock, so the gate's --locked runs pass.
+  # Only the pyproject seeded here: an existing one may not be a uv project.
+  - command: cd '{{ python_dir }}' && { test -f uv.lock || ! grep -q '^# Seeded once by project-standards' pyproject.toml || uv lock --quiet; }
+    when: "{{ _copier_operation == 'copy' and 'python' in languages }}"
+
+project_name:
+  type: str
+  help: The project name, lowercase with hyphens (it becomes the OTel service namespace)
+  validator: "{% if not (project_name | regex_search('^[a-z][a-z0-9-]*$')) %}Use lowercase letters, digits and hyphens.{% endif %}"
+
+description:
+  type: str
+  help: One line on what the project is
+
+kind:
+  type: str
+  help: What it is
+  choices:
+    A long-running service or API: service
+    A library or package used by other code: library
+    A command-line tool: cli
+    An app with a user interface: app
+
+# The project profile that house-architecture reads before the first design
+# decision. No default: each answer is a decision, never an inference.
+tenants_now:
+  type: str
+  help: How many tenants (separate sets of data, a person's or a company's) the first release holds
+  choices: [one, many]
+
+tenants_later:
+  type: str
+  help: How many tenants it will hold later (many builds the isolation shape now)
+  choices: [one, many]
+
+users_now:
+  type: str
+  help: How many people sign in to the first release
+  choices: [one, many]
+
+users_later:
+  type: str
+  help: How many people will sign in later, sharing a tenant's data
+  choices: [one, many]
+
+languages:
+  type: str
+  help: The languages it is written in
+  multiselect: true
+  choices:
+    dotnet: dotnet
+    python: python
+    typescript: typescript
+    rust: rust
+    shell: shell
+  validator: "{% if not languages %}Pick at least one.{% endif %}"
+
+nextjs:
+  type: bool
+  help: Does it have a Next.js front end?
+  default: false
+  when: "{{ 'typescript' in languages }}"
+
+# The command that reads one secret on a workstation, named in the gate's and
+# CI's messages. It comes from your environment file, never a default.
+vault_command:
+  type: str
+  help: The command that reads a secret on a workstation, for example your password manager's CLI
+
+onedev_project:
+  type: str
+  help: The OneDev project path, for example team/app
+  default: "{{ project_name }}"
+
+# Where each language's project lives, relative to the repo root. Its config
+# files (ruff.toml, Directory.Build.props, tsconfig.json and the rest) go there,
+# and the gate, the weekly refresh and CI run that language there.
+python_dir:
+  type: str
+  help: The folder of the Python project (the one with pyproject.toml), or . for the repo root
+  default: "."
+  when: "{{ 'python' in languages }}"
+  validator: "{% if not (python_dir | regex_search('^([.]|[A-Za-z0-9_][A-Za-z0-9_.-]*(/[A-Za-z0-9_][A-Za-z0-9_.-]*)*)$')) %}Give a folder under the repo root, for example backend, with no ./ or trailing slash.{% endif %}"
+
+rust_dir:
+  type: str
+  help: The folder of the Rust project (the one with Cargo.toml), or . for the repo root
+  default: "."
+  when: "{{ 'rust' in languages }}"
+  validator: "{% if not (rust_dir | regex_search('^([.]|[A-Za-z0-9_][A-Za-z0-9_.-]*(/[A-Za-z0-9_][A-Za-z0-9_.-]*)*)$')) %}Give a folder under the repo root, for example engine, with no ./ or trailing slash.{% endif %}"
+
+rust_version:
+  type: str
+  help: The Rust toolchain that rust-toolchain.toml and the CI image pin, for example 1.89.0
+  default: "1.89.0"
+  when: "{{ 'rust' in languages }}"
+  validator: "{% if not (rust_version | regex_search('^[0-9]+[.][0-9]+[.][0-9]+$')) %}Give a full version, for example 1.89.0.{% endif %}"
+
+dotnet_dir:
+  type: str
+  help: The folder of the .NET solution, or . for the repo root
+  default: "."
+  when: "{{ 'dotnet' in languages }}"
+  validator: "{% if not (dotnet_dir | regex_search('^([.]|[A-Za-z0-9_][A-Za-z0-9_.-]*(/[A-Za-z0-9_][A-Za-z0-9_.-]*)*)$')) %}Give a folder under the repo root, for example backend, with no ./ or trailing slash.{% endif %}"
+
+node_dir:
+  type: str
+  help: The folder of the TypeScript project (the one with package.json), or . for the repo root
+  default: "."
+  when: "{{ 'typescript' in languages }}"
+  validator: "{% if not (node_dir | regex_search('^([.]|[A-Za-z0-9_][A-Za-z0-9_.-]*(/[A-Za-z0-9_][A-Za-z0-9_.-]*)*)$')) %}Give a folder under the repo root, for example frontend, with no ./ or trailing slash.{% endif %}"
+
+dotnet_test_runner:
+  type: str
+  help: >-
+    The test runner. Microsoft.Testing.Platform suits TUnit and xUnit v3 (the
+    house default). VSTest suits xUnit v2, NUnit and older MSTest; the
+    Microsoft.Testing.Platform setting in global.json breaks them.
+  choices:
+    Microsoft.Testing.Platform (TUnit, xUnit v3): mtp
+    VSTest (xUnit v2, NUnit, older MSTest): vstest
+  default: mtp
+  when: "{{ 'dotnet' in languages }}"
+
+dotnet_lock_files:
+  type: bool
+  help: >-
+    Restore from NuGet lock files (packages.lock.json) and fail when they are
+    stale? Say no when a package comes from a feed that only CI can read.
+  default: true
+  when: "{{ 'dotnet' in languages }}"
+
+nuget_feed:
+  type: str
+  help: >-
+    A private NuGet feed to take some packages from, or empty for none. For
+    example https://nuget.pkg.github.com/<owner>/index.json
+  default: ""
+  when: "{{ 'dotnet' in languages }}"
+  validator: "{% if nuget_feed and not (nuget_feed | regex_search('^https?://[^ ]+$')) %}Give the feed URL.{% endif %}"
+
+nuget_feed_name:
+  type: str
+  help: The feed's key in nuget.config (its login comes from NUGET_<NAME>_USERNAME and _PASSWORD)
+  default: private
+  when: "{{ 'dotnet' in languages and nuget_feed }}"
+  validator: "{% if not (nuget_feed_name | regex_search('^[a-z][a-z0-9-]*$')) %}Use lowercase letters, digits and hyphens.{% endif %}"
+
+nuget_feed_packages:
+  type: yaml
+  help: The package ID patterns to take from the feed, as a list, for example [Cleipnir.ResilientFunctions*]
+  default: []
+  when: "{{ 'dotnet' in languages and nuget_feed }}"
+  validator: "{% if not nuget_feed_packages or nuget_feed_packages is string %}List at least one pattern, for example [Cleipnir.*].{% endif %}"
+
+npm_allow_scripts:
+  type: yaml
+  help: >-
+    The npm packages whose install scripts you approved, as a list, for example
+    [sharp, protobufjs]. Every other install script is refused.
+  default: []
+  when: "{{ 'typescript' in languages }}"
+  validator: "{% if npm_allow_scripts is string or (npm_allow_scripts | reject('string') | list) %}Give a list of package names, for example [sharp].{% endif %}"
+
+shell_exclude:
+  type: yaml
+  help: >-
+    Folders of vendored or retired shell scripts that the gate must not check
+    (shellcheck and shfmt). A gate script in them is not a second gate. As a
+    list, for example [.ralph, archive]
+  default: []
+  validator: "{% if shell_exclude is string %}Give a list, for example [.ralph, archive].{% else %}{% for d in shell_exclude %}{% if loop.first and (shell_exclude | reject('string') | list) %}Give folder names as text.{% elif d is string and (not (d | regex_search('^[A-Za-z0-9_.][A-Za-z0-9_.-]*(/[A-Za-z0-9_.][A-Za-z0-9_.-]*)*$')) or '..' in d) %}{{ d }} is not a folder under the repo root. {% endif %}{% endfor %}{% endif %}"
+
+gate_budget_reason:
+  type: str
+  help: >-
+    Why a gate section needs more time than its default budget (fast 5 s), or
+    empty to keep the default. Written in the answers file
+    so a reviewer sees it. Needed only when a budget below is raised.
+  default: ""
+
+gate_fast_budget:
+  type: int
+  help: The most seconds a section may take in gate.sh --fast
+  default: 5
+  validator: "{% if gate_fast_budget < 1 %}Give a whole number of seconds, at least 1.{% elif gate_fast_budget > 5 and not gate_budget_reason | trim %}A budget above the default of 5 needs a reason in gate_budget_reason.{% endif %}"
+
+gate_full_budget:
+  type: int
+  help: The most seconds a section may take in the full gate (--full and CI), or 0 for no budget
+  default: 0
+  validator: "{% if gate_full_budget < 0 %}Give a whole number of seconds, or 0 for none.{% endif %}"
+
+test_folders:
+  type: yaml
+  help: >-
+    Folders whose files count as tests in the gate's line of source lines
+    against test lines, as a list, for example [spec, e2e]. A file named like a
+    test, and any file under a tests folder, already counts.
+  default: []
+  validator: "{% if test_folders is string %}Give a list, for example [spec, e2e].{% else %}{% for d in test_folders %}{% if d is not string or not (d | regex_search('^[A-Za-z0-9_.][A-Za-z0-9_.-]*(/[A-Za-z0-9_.][A-Za-z0-9_.-]*)*$')) or '..' in d %}{{ d }} is not a folder under the repo root. {% endif %}{% endfor %}{% endif %}"
+
+python_floor:
+  type: str
+  help: The oldest Python it supports (the oldest still in bugfix support for a new repo)
+  default: "3.13"
+  when: "{{ 'python' in languages }}"
+
+adr_dir:
+  type: str
+  help: Where ADRs live. Keep them out of any published docs site (for example design/adr)
+  default: docs/adr
+
+private_index:
+  type: str
+  help: >-
+    A private package index to install some packages from, or empty for none.
+    For example https://<forge-url>/<project>/~pypi/simple/
+  default: ""
+  when: "{{ 'python' in languages }}"
+  validator: "{% if private_index and not (private_index | regex_search('^https?://[^ ]+/$')) %}Give the index URL, ending in a slash.{% endif %}"
+
+private_index_name:
+  type: str
+  help: The index's name in uv config (uv reads its login from UV_INDEX_<NAME>_USERNAME and _PASSWORD)
+  default: "{{ private_index.split('/')[3] if private_index.split('/') | length > 4 else 'private' }}"
+  when: "{{ 'python' in languages and private_index }}"
+  validator: "{% if not (private_index_name | regex_search('^[a-z][a-z0-9-]*$')) %}Use lowercase letters, digits and hyphens.{% endif %}"
+
+private_packages:
+  type: yaml
+  help: The packages to take from the private index, as a list, for example [comfyui-core]
+  default: []
+  when: "{{ 'python' in languages and private_index }}"
+  validator: "{% if not private_packages or private_packages is string %}List at least one package, for example [comfyui-core].{% endif %}"

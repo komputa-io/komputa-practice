@@ -1,0 +1,3 @@
+# Managed by project-standards. Only versions at least seven days old.
+# Let a security fix through with: exclude-newer-package = { <name> = false }
+exclude-newer = "7 days"

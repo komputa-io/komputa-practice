@@ -1,0 +1,58 @@
+# The gate
+
+`scripts/gate.sh` is the only gate of this repo. The template owns this file
+and the gate: do not edit either one here. `copier update` keeps both current.
+Change them in project-standards.
+
+## Commands
+
+| Command | What it does |
+|---|---|
+| `scripts/gate.sh --fast` | On commit (the pre-commit hook): format, lint and secret scan on staged files, about 5 s. It refuses a staged file that has more changes on disk |
+| `scripts/gate.sh` | The default while you build: the full checks of only the sections that the diff since the merge base touches (docs alone run none). A path that maps to no section, no merge base or no change runs every section; the gate says which on one line. Skips a clean tree that already passed |
+| `scripts/gate.sh --full` | Before a PR and in CI: every section in full (format, lint, type check, every test). Must pass before a PR |
+| `scripts/gate.sh --only SECTION` | One section only, for example `--only shell`. CI runs one per image |
+
+- Section budgets: each section writes its time to `.gate/` and fails the gate
+  over its budget: fast {{ gate_fast_budget }} s{% if gate_full_budget %}, full {{ gate_full_budget }} s{% endif %}. The failure names the slowest
+  tests or steps. Raise a budget only with `gate_budget_reason` in
+  `.copier-answers.yml`.
+- Test lines: a full run prints the source lines and test lines the branch adds
+  against its merge base. It never fails on them. How many tests a PR needs
+  follows risk: see "Tests follow risk" in `komputa-practice`
+  (`rules/working-rules.md`).
+- File size: `--fast` refuses a staged file over 5,000 tokens (bytes / 4). A
+  large file costs tokens on every later call of an agent that read it. Split
+  it: one module for each concern, and tests in their own file. Lock files,
+  generated code, test data and binary files do not count.
+  `.gate-size-baseline` lists the files that were over the cap when the repo
+  took up the check ("<tokens> <path>" on each line). A listed file may shrink
+  and never grow. `scripts/gate.sh --size-baseline` writes the list.
+- No hook runs on push. CI runs the full gate on the pull request.
+
+## The repo's own checks
+
+- Do not add another gate script.
+- Put the repo's own checks in `scripts/gate.local.sh`. The repo owns that file.
+  The gate runs it from the repo root with one argument: `full` or `fast`.
+  In fast mode, check staged files only and stay inside the 5 s budget.
+  For example:
+
+  ```bash
+  #!/usr/bin/env bash
+  set -Eeuo pipefail
+  bad=$(gofmt -l .)
+  [[ -z "$bad" ]] || { printf 'gofmt: %s\n' "$bad" >&2; exit 1; }
+  if [[ "$1" == full ]]; then
+    go vet ./...
+    go test ./...
+  fi
+  ```
+- An old gate script (for example `gate.sh`, `check.sh`, `ci.sh` or
+  `quality.sh`, in any folder) is folded into `scripts/gate.local.sh` and
+  then removed, together with the CI steps that call it. The PR that removes it
+  lists where each of its checks went. The gate fails while one is tracked
+  outside a test-data folder (`fixtures`, `__fixtures__`, `tests`, `test`,
+  `spec` or `testdata`); a vendored folder goes in the `shell_exclude` answer
+  instead. The two exemptions are `scripts/gate.sh` and its PowerShell twin
+  `scripts/gate.ps1`.

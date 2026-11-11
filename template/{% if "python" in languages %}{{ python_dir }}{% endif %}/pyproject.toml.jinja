@@ -1,0 +1,36 @@
+# Seeded once by project-standards; the repo owns this file.
+# When the project ships a package, add a Hatchling [build-system] and a src/
+# layout (house-python). Until then uv treats it as a virtual project.
+[project]
+name = "{{ project_name }}"
+version = "0.1.0"
+description = {{ description | tojson }}
+requires-python = ">={{ python_floor }}"
+dependencies = []
+
+# Dev tools: ranges up to the next major (next minor below 1.0); uv.lock holds
+# them exact and the weekly update job moves them.
+[dependency-groups]
+dev = [
+  "pyright[nodejs]>=1.1.414,<2",
+  "pytest>=9.1,<10",
+  "pytest-socket>=0.8.1,<0.9",
+  "pytest-xdist>=3.8,<4",
+  "ruff>=0.16.8,<0.17",
+]
+{%- if private_index %}
+
+# The private index. explicit: uv asks it only for the packages pinned below,
+# and never takes those from PyPI. Its login comes from
+# UV_INDEX_{{ private_index_name | upper | replace('-', '_') }}_USERNAME and UV_INDEX_{{ private_index_name | upper | replace('-', '_') }}_PASSWORD; uv.toml says why
+# this lives here.
+[[tool.uv.index]]
+name = "{{ private_index_name }}"
+url = "{{ private_index }}"
+explicit = true
+
+[tool.uv.sources]
+{%- for p in private_packages %}
+{{ p }} = { index = "{{ private_index_name }}" }
+{%- endfor %}
+{%- endif %}

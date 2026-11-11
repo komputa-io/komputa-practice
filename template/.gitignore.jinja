@@ -1,0 +1,17 @@
+.claude/settings.local.json
+.claude/worktrees/
+scratch/
+{% if 'python' in languages %}.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+{% endif %}{% if 'dotnet' in languages %}bin/
+obj/
+TestResults/
+{% endif %}{% if 'typescript' in languages %}node_modules/
+.next/
+dist/
+coverage/
+{% endif %}

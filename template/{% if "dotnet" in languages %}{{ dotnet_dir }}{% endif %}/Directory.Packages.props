@@ -1,0 +1,9 @@
+<!-- Versions move only through the weekly job (scripts/update-deps.sh).
+     Seeded by project-standards; this file belongs to the repo. -->
+<Project>
+  <!-- Analyzers for every project. Add PackageVersion items for the repo's packages. -->
+  <ItemGroup>
+    <GlobalPackageReference Include="Meziantou.Analyzer" Version="3.0.294" />
+    <GlobalPackageReference Include="Roslynator.Analyzers" Version="5.0.1" />
+  </ItemGroup>
+</Project>

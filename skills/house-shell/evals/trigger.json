@@ -1,0 +1,22 @@
+[
+  {"query": "write a bash script that backs up the postgres container nightly", "should_trigger": true},
+  {"query": "add a PowerShell twin for scripts/install.sh", "should_trigger": true},
+  {"query": "the deploy script carried on after the docker build failed, fix it", "should_trigger": true},
+  {"query": "write a Claude Code PreToolUse hook that blocks writes to .env files", "should_trigger": true},
+  {"query": "review this shell script before I run it on the homelab", "should_trigger": true},
+  {"query": "make the cleanup script safe so it doesn't delete anything by accident", "should_trigger": true},
+  {"query": "set up shellcheck and shfmt for the dotfiles repo", "should_trigger": true},
+  {"query": "the script needs to stop the stuck sync process, how should it kill it?", "should_trigger": true},
+  {"query": "add a CI step script that waits for the API health check to pass", "should_trigger": true},
+  {"query": "write a migration script that renames the skill folders across all repos", "should_trigger": true},
+  {"query": "add a TUnit test for the GoalHandler", "should_trigger": false},
+  {"query": "write pytest tests for the hevy client", "should_trigger": false},
+  {"query": "the React page re-renders on every keystroke, fix it", "should_trigger": false},
+  {"query": "where should the matching rules live, a slice or a shared core?", "should_trigger": false},
+  {"query": "which spans and metrics should the grab service emit?", "should_trigger": false},
+  {"query": "open a PR for this branch and merge it when CI is green", "should_trigger": false},
+  {"query": "write a commit message for these changes", "should_trigger": false},
+  {"query": "explain what a deep module is", "should_trigger": false},
+  {"query": "add an EF Core migration for the goals table", "should_trigger": false},
+  {"query": "bump next and react in package.json", "should_trigger": false}
+]

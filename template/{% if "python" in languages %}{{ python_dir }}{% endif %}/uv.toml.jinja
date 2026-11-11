@@ -1,0 +1,30 @@
+# Managed by project-standards. Only versions at least seven days old.
+# Let a security fix through with: exclude-newer-package = { <name> = false }
+exclude-newer = "7 days"
+{%- if private_index %}
+
+# Packages from the private index {{ private_index }}
+# That registry records no upload dates, so the cooldown would hide every
+# version. These packages are exempt from it.
+exclude-newer-package = { {% for p in private_packages %}{% if not loop.first %}, {% endif %}{{ p }} = false{% endfor %} }
+
+# The index and the pins live in pyproject.toml, not here: uv refuses
+# [sources] in uv.toml, and a source may name only an index declared in
+# pyproject.toml. A new project gets them seeded. Any other project adds:
+#
+#   [[tool.uv.index]]
+#   name = "{{ private_index_name }}"
+#   url = "{{ private_index }}"
+#   explicit = true
+#
+#   [tool.uv.sources]
+{%- for p in private_packages %}
+#   {{ p }} = { index = "{{ private_index_name }}" }
+{%- endfor %}
+#
+# uv then warns that [tool.uv] index is ignored in favour of this file. That
+# covers only the default index list; the sources above still use it.
+#
+# The registry needs a login. uv reads it from UV_INDEX_{{ private_index_name | upper | replace('-', '_') }}_USERNAME and
+# UV_INDEX_{{ private_index_name | upper | replace('-', '_') }}_PASSWORD. Never write it in a file.
+{%- endif %}

@@ -1,0 +1,10 @@
+{
+  "PreToolUse": [
+    { "matcher": "Bash", "hooks": [{ "type": "command", "command": "~/.claude/hooks/block-dangerous-git.sh", "onFailure": "block" }] },
+    { "matcher": "Write|Edit|MultiEdit", "hooks": [{ "type": "command", "command": "~/.claude/hooks/block-secret-write.sh", "onFailure": "block" }] },
+    { "matcher": "Read|Bash", "hooks": [{ "type": "command", "command": "~/.claude/hooks/block-credential-read.sh", "onFailure": "block" }] },
+    { "matcher": "Bash|mcp__claude-in-chrome__.*", "hooks": [{ "type": "command", "command": "~/.claude/hooks/block-operator-screen.sh", "onFailure": "block" }] },
+    { "matcher": "Bash|Edit|MultiEdit|Write", "hooks": [{ "type": "command", "command": "~/.claude/hooks/block-test-weakening.sh", "onFailure": "block" }] },
+    { "matcher": "Bash", "hooks": [{ "type": "command", "command": "~/.claude/hooks/block-destructive-delete.sh", "onFailure": "block" }] }
+  ]
+}

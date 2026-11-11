@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# Installs the pinned cargo-deny release binary into $CARGO_HOME/bin, checked
+# against its sha256. Safe to re-run: it does nothing when that version is there.
+#   scripts/install-cargo-deny.sh
+# Managed by project-standards: change the template, not this copy.
+set -Eeuo pipefail
+shopt -s inherit_errexit
+trap 'printf "%s: line %d: %s exited %d\n" "${0##*/}" "$LINENO" "$BASH_COMMAND" "$?" >&2' ERR
+die() {
+  printf 'install-cargo-deny: %s\n' "$*" >&2
+  exit 1
+}
+
+version=0.20.2
+sha256=9f12ed4c49936e09b48bf862b595cde2fe64fcbd9d74dfacac6131ca824c8d5f
+name="cargo-deny-$version-x86_64-unknown-linux-musl"
+bin="${CARGO_HOME:-$HOME/.cargo}/bin"
+
+[[ $# == 0 ]] || {
+  printf 'usage: scripts/install-cargo-deny.sh\n' >&2
+  exit 2
+}
+[[ "$(uname -sm)" == "Linux x86_64" ]] || die "no pinned binary for $(uname -sm); run: cargo install cargo-deny --locked --version $version"
+if [[ -x "$bin/cargo-deny" ]] && [[ "$("$bin/cargo-deny" --version)" == "cargo-deny $version" ]]; then
+  printf 'install-cargo-deny: cargo-deny %s is already in %s\n' "$version" "$bin"
+  exit 0
+fi
+
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+curl -fsSL --max-time 120 -o "$tmp/deny.tar.gz" \
+  "https://github.com/EmbarkStudios/cargo-deny/releases/download/$version/$name.tar.gz" \
+  || die "download of cargo-deny $version failed"
+printf '%s  %s\n' "$sha256" "$tmp/deny.tar.gz" | sha256sum --check --quiet - \
+  || die "cargo-deny $version does not match its pinned sha256"
+tar -xzf "$tmp/deny.tar.gz" -C "$tmp"
+mkdir -p "$bin"
+install -m 0755 "$tmp/$name/cargo-deny" "$bin/cargo-deny"
+printf 'install-cargo-deny: installed cargo-deny %s in %s\n' "$version" "$bin"

@@ -1,0 +1,22 @@
+[
+  {"query": "the garmin client keeps getting 429s, how should the retries work?", "should_trigger": true},
+  {"query": "add a nightly job that recalculates every user's weekly volume", "should_trigger": true},
+  {"query": "add a span and a duration histogram to the grab handler", "should_trigger": true},
+  {"query": "the sync failure alert in SigNoz never fires, fix it", "should_trigger": true},
+  {"query": "add health checks for the database and the indexer to the mediahub service", "should_trigger": true},
+  {"query": "when an order is placed we need to tell the email service reliably, how?", "should_trigger": true},
+  {"query": "the LLM calls time out after 30 seconds and look like throttling", "should_trigger": true},
+  {"query": "trace the LLM calls so we can see token usage per model", "should_trigger": true},
+  {"query": "set up OpenTelemetry for the new workout-review service", "should_trigger": true},
+  {"query": "should the approval flow that waits days for a human use Temporal or a job queue?", "should_trigger": true},
+  {"query": "where should the pricing logic live, the handler or a shared core?", "should_trigger": false},
+  {"query": "make GoalId a Vogen value object", "should_trigger": false},
+  {"query": "write pytest tests for the matcher", "should_trigger": false},
+  {"query": "the React page re-renders on every keystroke, fix it", "should_trigger": false},
+  {"query": "write a bash script to rotate the backup files", "should_trigger": false},
+  {"query": "open a PR for this branch and merge it when CI is green", "should_trigger": false},
+  {"query": "write a commit message for these changes", "should_trigger": false},
+  {"query": "explain what a deep module is", "should_trigger": false},
+  {"query": "rename the --scene flag without breaking callers", "should_trigger": false},
+  {"query": "add a column to the goals table with an EF Core migration", "should_trigger": false}
+]

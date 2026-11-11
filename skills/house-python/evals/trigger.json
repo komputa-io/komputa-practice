@@ -1,0 +1,22 @@
+[
+  {"query": "set up a new python package for the garmin sync with uv, ruff and pyright", "should_trigger": true},
+  {"query": "write pytest tests for the hevy client without hitting the real API", "should_trigger": true},
+  {"query": "add a click command to the odev-style CLI that exports workouts as JSON", "should_trigger": true},
+  {"query": "this python function returns success=False and an error string, how should it report failures instead?", "should_trigger": true},
+  {"query": "review this python PR, it uses unittest.mock and Optional everywhere", "should_trigger": true},
+  {"query": "add SQLAlchemy models for scenes and releases in mediahub", "should_trigger": true},
+  {"query": "the requests call in the indexer client hangs forever sometimes, fix it", "should_trigger": true},
+  {"query": "bump httpx in pyproject.toml and relock", "should_trigger": true},
+  {"query": "make the FastAPI endpoint return the right thing when the scene isn't found", "should_trigger": true},
+  {"query": "run the 500 release lookups concurrently in the python sync job without overloading prowlarr", "should_trigger": true},
+  {"query": "where should the matching rules live, in the slice or a shared core?", "should_trigger": false},
+  {"query": "add an EF Core migration for the goals table", "should_trigger": false},
+  {"query": "the React page re-renders on every keystroke, fix it", "should_trigger": false},
+  {"query": "which spans should the grab job emit?", "should_trigger": false},
+  {"query": "write a bash script to rotate the backup files", "should_trigger": false},
+  {"query": "explain what a deep module is", "should_trigger": false},
+  {"query": "open a PR for this branch and merge it when CI is green", "should_trigger": false},
+  {"query": "write a commit message for these changes", "should_trigger": false},
+  {"query": "why is the docs build killed for memory on the build server?", "should_trigger": false},
+  {"query": "add a TUnit test for the GoalHandler", "should_trigger": false}
+]

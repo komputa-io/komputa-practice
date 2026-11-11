@@ -1,0 +1,9 @@
+{
+  "sdk": {
+    "version": "10.0.100",
+    "rollForward": "latestFeature"
+  }{% if dotnet_test_runner == 'mtp' %},
+  "test": {
+    "runner": "Microsoft.Testing.Platform"
+  }{% endif %}
+}

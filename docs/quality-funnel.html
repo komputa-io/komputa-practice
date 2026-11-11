@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>The quality funnel</title>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@600;700;800&family=Inter:ital,wght@0,400;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #F4F3EF; color: #111111; font-family: 'Inter', 'Helvetica Neue', Arial, sans-serif; padding: 3rem 2rem; }
+    .frame { max-width: 1040px; margin: 0 auto; }
+    h1 { font-family: 'Outfit', 'Helvetica Neue', Arial, sans-serif; font-size: 1.75rem; font-weight: 700; margin-bottom: 1.5rem; }
+    .scroll { overflow-x: auto; }
+    svg { width: 100%; min-width: 960px; display: block; }
+    .heading { font-family: 'Inter', 'Helvetica Neue', Arial, sans-serif; font-size: 10px; font-weight: 600; letter-spacing: 0.14em; fill: #5E5E5A; }
+    .name { font-family: 'Inter', 'Helvetica Neue', Arial, sans-serif; font-size: 16px; font-weight: 600; fill: #111111; text-anchor: middle; }
+    .sub { font-family: 'Inter', 'Helvetica Neue', Arial, sans-serif; font-size: 11px; fill: #5E5E5A; text-anchor: middle; }
+    .job { font-family: 'Inter', 'Helvetica Neue', Arial, sans-serif; font-size: 12px; font-weight: 600; fill: #111111; }
+    .where { font-family: 'Inter', 'Helvetica Neue', Arial, sans-serif; font-size: 11px; fill: #5E5E5A; }
+    .tech { font-family: 'JetBrains Mono', ui-monospace, Menlo, monospace; font-size: 10px; fill: #5E5E5A; }
+    .callout { font-family: 'Inter', 'Helvetica Neue', Arial, sans-serif; font-size: 14px; font-style: italic; fill: #111111; }
+    .lead { font-weight: 600; font-style: normal; fill: #C2410C; }
+    .credit { font-family: 'Inter', 'Helvetica Neue', Arial, sans-serif; font-size: 10px; fill: #5E5E5A; text-anchor: end; }
+    .layer { fill: #FFFFFF; stroke: #111111; stroke-width: 1.25; stroke-linejoin: round; }
+    .row { stroke: #DDDBD5; stroke-width: 1; }
+  </style>
+</head>
+<body>
+  <main class="frame">
+    <h1>The quality funnel</h1>
+    <div class="scroll">
+      <svg viewBox="0 0 960 600" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="quality-funnel-title quality-funnel-desc">
+        <title id="quality-funnel-title">The quality funnel</title>
+        <desc id="quality-funnel-desc">A funnel of five layers that catch mistakes, from the widest to the narrowest: codebase, static analysis, verification, prose and human review, with an arrow that moves each lesson up to the highest layer that can hold it.</desc>
+        <defs>
+          <marker id="arrow-accent" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto">
+            <path d="M0,0 L8,4 L0,8 Z" fill="#C2410C"/>
+          </marker>
+        </defs>
+
+        <rect width="960" height="600" fill="#F4F3EF"/>
+
+        <text class="heading" x="80" y="44">WHERE A MISTAKE GETS CAUGHT</text>
+        <text class="heading" x="664" y="44">WHAT IT DOES HERE</text>
+
+        <line x1="48" y1="524" x2="48" y2="68" stroke="#C2410C" stroke-width="1.5" marker-end="url(#arrow-accent)"/>
+
+        <line class="row" x1="640" y1="64" x2="920" y2="64"/>
+        <line class="row" x1="584" y1="156" x2="920" y2="156"/>
+        <line class="row" x1="528" y1="248" x2="920" y2="248"/>
+        <line class="row" x1="472" y1="340" x2="920" y2="340"/>
+        <line class="row" x1="416" y1="432" x2="920" y2="432"/>
+        <line class="row" x1="360" y1="524" x2="920" y2="524"/>
+
+        <polygon class="layer" points="80,64 640,64 584,156 136,156"/>
+        <polygon class="layer" points="136,156 584,156 528,248 192,248"/>
+        <polygon class="layer" points="192,248 528,248 472,340 248,340"/>
+        <polygon class="layer" points="248,340 472,340 416,432 304,432"/>
+        <polygon points="304,432 416,432 360,524" fill="#FF5A1F" stroke="#C2410C" stroke-width="1.25" stroke-linejoin="round"/>
+
+        <text class="name" x="360" y="106">Codebase</text>
+        <text class="sub" x="360" y="126">good API design, architecture, refactoring</text>
+        <text class="name" x="360" y="198">Static analysis</text>
+        <text class="sub" x="360" y="218">lints, types, compilers, tests, CI</text>
+        <text class="name" x="360" y="290">Verification</text>
+        <text class="sub" x="360" y="310">formal, empirical</text>
+        <text class="name" x="360" y="382">Prose</text>
+        <text class="sub" x="360" y="402">rules, skills, AGENTS.md</text>
+        <text class="name" x="360" y="456" style="font-size:14px">Human</text>
+        <text class="name" x="360" y="474" style="font-size:14px">review</text>
+
+        <text class="job" x="664" y="104">Make the mistake impossible to write.</text>
+        <text class="tech" x="664" y="124">pstack:architect, pstack:deslop</text>
+        <text class="job" x="664" y="196">Fail it by machine, with nobody watching.</text>
+        <text class="tech" x="664" y="216">block-dangerous-git.sh, scrub-check.sh</text>
+        <text class="job" x="664" y="288">Run the real thing. Show that it works.</text>
+        <text class="tech" x="664" y="308">pstack:interrogate, pstack:swarm</text>
+        <text class="job" x="664" y="380">Hold the judgment calls no check can hold.</text>
+        <text class="tech" x="664" y="400">rules/working-rules.md, skills/herdr</text>
+        <text class="job" x="664" y="472">Decide what only a person can decide.</text>
+        <text class="where" x="664" y="492">The go, and each action that cannot be undone.</text>
+
+        <text class="callout lead" x="64" y="452">Move each lesson up.</text>
+        <text class="callout" x="64" y="476">Write prose only when</text>
+        <text class="callout" x="64" y="496">no check can hold it.</text>
+
+        <text class="credit" x="920" y="564">After Lauren Tan (poteto)</text>
+      </svg>
+    </div>
+  </main>
+</body>
+</html>

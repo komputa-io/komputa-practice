@@ -1,0 +1,230 @@
+{%- set langs = [] -%}
+{%- for l in ['python', 'dotnet', 'typescript', 'rust'] if l in languages -%}{%- set _ = langs.append(l) -%}{%- endfor -%}
+#!/usr/bin/env bash
+# Refresh dependencies within their ranges and open a PR. Run weekly by CI
+# ("Update dependencies" in .onedev-buildspec.yml); safe to run by hand.
+#   scripts/update-deps.sh            refresh, commit to a branch, open a PR
+#   scripts/update-deps.sh --dry-run  refresh and show the diff; commit nothing
+#   scripts/update-deps.sh --refresh-only [--only SECTION ...]
+#                                     refresh only, commit nothing. Sections: {{ langs | join(', ') if langs else 'none' }}
+#   scripts/update-deps.sh --publish-only
+#                                     commit what a refresh left and open a PR
+# CI uses the last two when no one image holds every toolchain.
+# Never crosses a major version: the ranges cap it, and a new major becomes an
+# issue for a person to read the changelog. Only versions at least seven days
+# old are taken. Managed by project-standards.
+set -Eeuo pipefail
+shopt -s inherit_errexit
+trap 'printf "%s: line %d: %s exited %d\n" "${0##*/}" "$LINENO" "$BASH_COMMAND" "$?" >&2' ERR
+die() {
+  printf 'update-deps: %s\n' "$*" >&2
+  exit 1
+}
+
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$root"
+sections=({{ langs | join(' ') }})
+usage() {
+  printf 'usage: scripts/update-deps.sh [--dry-run | --refresh-only [--only SECTION ...] | --publish-only]\nsections: %s\n' "${sections[*]}" >&2
+  exit 2
+}
+dry=0
+step=all
+only=()
+while (($# > 0)); do
+  case "$1" in
+    --dry-run | -n) dry=1 ;;
+    --refresh-only) step=refresh ;;
+    --publish-only) step=publish ;;
+    --only)
+      (($# > 1)) || usage
+      only+=("$2")
+      shift
+      ;;
+    *) usage ;;
+  esac
+  shift
+done
+# want[SECTION] is set for each section this run includes; no --only means all.
+chosen=${only[*]}
+[[ -n "$chosen" ]] || only=("${sections[@]}")
+{% if langs %}declare -A want=()
+{% endif %}for s in "${only[@]}"; do
+  [[ " ${sections[*]} " == *" $s "* ]] || usage
+{%- if langs %}
+  want[$s]=1
+{%- endif %}
+done
+if [[ "$step" == all ]]; then
+  [[ -z "$(git status --porcelain)" ]] || die "the working tree has changes; commit or stash them first"
+fi
+
+if [[ "$step" != publish ]]; then
+{%- if 'python' in langs %}
+  # Python, in {{ python_dir }}: uv.toml holds the seven-day cooldown; pyproject.toml
+  # holds the ranges.
+  if [[ -n "${want[python]-}" ]]; then
+    (cd '{{ python_dir }}' && uv lock --upgrade)
+  fi
+{%- endif %}{% if 'dotnet' in langs %}
+  # .NET, in {{ dotnet_dir }}: Directory.Packages.props names versions; move them
+  # within the major.
+  if [[ -n "${want[dotnet]-}" ]]; then
+    (
+      cd '{{ dotnet_dir }}'
+      # A dotnet add on a GlobalPackageReference can rewrite the SDK's own
+      # NuGet.targets (NuGet bug 12552, https://github.com/NuGet/Home/issues/12552)
+      # and break every restore on the machine. Refuse to finish if any SDK
+      # .props or .targets file changed.
+      sdk_version=$(dotnet --version)
+      sdks=$(dotnet --list-sdks)
+      sdk=$(awk -v v="$sdk_version" '$1 == v { sub(/^[^[]*\[/, ""); sub(/\]$/, ""); print }' <<<"$sdks")
+      [[ -n "$sdk" && -d "$sdk/$sdk_version" ]] || die "dotnet --list-sdks names no folder for SDK $sdk_version"
+      sdk=$sdk/$sdk_version
+      sums=$(mktemp)
+      trap 'rm -f "$sums"' EXIT
+      find "$sdk" -type f \( -name '*.props' -o -name '*.targets' \) -print0 | xargs -0 -r sha256sum >"$sums"
+      [[ -s "$sums" ]] || die "found no .props or .targets file in $sdk"
+      sdk_check() {
+        local failed line names=''
+        if ! failed=$(sha256sum --check --quiet "$sums" 2>/dev/null); then
+          while IFS= read -r line; do names+="${line%: FAILED*} "; done <<<"$failed"
+          die "the refresh changed these SDK files: ${names}Restore them from the SDK $sdk_version tarball before the next restore."
+        fi
+      }
+      dotnet tool restore
+      # A security fix skips the seven-day wait. NuGetAudit fails the restore and
+      # names each package with a known advisory (NU1901 to NU1904); take its
+      # newest version within the major now, then refresh the rest with the wait.
+      mapfile -t advised < <(dotnet restore 2>&1 | sed -nE "s/.*NU190[1-4]:.*Package '([^']+)'.*/\1/p" | sort -u)
+      for pkg in "${advised[@]}"; do
+        printf 'update-deps: dotnet: %s has a known advisory, so its fix skips the seven-day wait\n' "$pkg" >&2
+        dotnet outdated --version-lock Major --include "$pkg" --upgrade --no-restore
+      done
+      # --no-restore makes dotnet-outdated edit Directory.Packages.props itself;
+      # without it the tool runs dotnet add, which refuses a GlobalPackageReference.
+      dotnet outdated --version-lock Major --older-than 7 --upgrade --no-restore
+      # Check before the restore too: a broken NuGet.targets fails it with a
+      # message that does not point here.
+      sdk_check
+      dotnet tool update --all --local
+      dotnet restore --force-evaluate
+      sdk_check
+    )
+  fi
+{%- endif %}{% if 'typescript' in langs %}
+  # TypeScript, in {{ node_dir }}: .npmrc holds the seven-day cooldown; package.json
+  # holds the ranges.
+  if [[ -n "${want[typescript]-}" ]]; then
+    (cd '{{ node_dir }}' && npm update)
+  fi
+{%- endif %}{% if 'rust' in langs %}
+  # Rust, in {{ rust_dir }}: stable cargo has no release-age filter (its
+  # min-publish-age is nightly-only), so each update is checked against the
+  # date that crates.io gives for the new version. A version under seven days
+  # old, or one with no date there (a git or private-registry crate), stays.
+  # An update that pulls such a version in with it is undone. A crate that an
+  # update adds new is not checked: cargo deny reads it in the gate.
+  if [[ -n "${want[rust]-}" ]]; then
+    (
+      cd '{{ rust_dir }}'
+      # locked NAME VERSION: is this version of the crate in Cargo.lock?
+      locked() {
+        grep -A1 -x "name = \"$1\"" Cargo.lock | grep -qx "version = \"$2\""
+      }
+      cutoff=$(date -u -d '7 days ago' +%Y-%m-%dT%H:%M:%S)
+      plan=$(cargo update --dry-run 2>&1 \
+        | sed -n 's/^ *Updating \([A-Za-z0-9_-]\{1,\}\) v\([0-9][0-9A-Za-z.+-]*\) -> v\([0-9][0-9A-Za-z.+-]*\).*/\1 \2 \3/p')
+      take=()
+      hold=()
+      while read -r name old new; do
+        [[ -n "$name" ]] || continue
+        body=$(curl -fsS --max-time 30 -H 'User-Agent: update-deps (weekly dependency refresh)' \
+          "https://crates.io/api/v1/crates/$name/$new" 2>/dev/null) || body=
+        created=
+        # The first created_at in the record is the version's own.
+        [[ ! "$body" =~ \"created_at\":\"([^\"]+)\" ]] || created=${BASH_REMATCH[1]}
+        if [[ -n "$created" && "$created" < "$cutoff" ]]; then
+          take+=("$name $old $new")
+        else
+          hold+=("$name $new")
+          printf 'update-deps: rust: %s stays at %s: %s is under seven days old, or has no date\n' "$name" "$old" "$new"
+        fi
+        # crates.io asks for at most one request each second.
+        sleep 1
+      done <<<"$plan"
+      keep=$(mktemp)
+      for row in "${take[@]}"; do
+        read -r name old new <<<"$row"
+        # An earlier update can move this crate too; then there is nothing to do.
+        # shellcheck disable=SC2310 # the status is the answer.
+        locked "$name" "$old" || continue
+        cp Cargo.lock "$keep"
+        if ! cargo update --package "$name@$old" --precise "$new"; then
+          cp "$keep" Cargo.lock
+          printf 'update-deps: rust: %s stays at %s: cargo could not move it\n' "$name" "$old"
+          continue
+        fi
+        for held in "${hold[@]}"; do
+          # shellcheck disable=SC2310 # the status is the answer.
+          if locked "${held% *}" "${held#* }"; then
+            cp "$keep" Cargo.lock
+            printf 'update-deps: rust: %s stays at %s: %s needs %s, which is under seven days old\n' "$name" "$old" "$new" "$held"
+            break
+          fi
+        done
+      done
+      rm -f "$keep"
+    )
+  fi
+{%- endif %}
+  if [[ "$step" == refresh ]]; then
+    printf 'update-deps: refreshed %s; nothing committed\n' "${only[*]}"
+    exit 0
+  fi
+fi
+
+changes=$(git status --porcelain)
+if [[ -z "$changes" ]]; then
+  printf 'update-deps: everything is current; nothing to do\n'
+  exit 0
+fi
+git --no-pager diff --stat
+if [[ "$dry" == 1 ]]; then
+  printf 'update-deps: dry run; to apply: scripts/update-deps.sh\n' >&2
+  exit 0
+fi
+
+# The PR goes through the OneDev REST API. CI sets these in the buildspec.
+[[ -n "${ODEV_HOST-}" && -n "${ODEV_PROJECT-}" && -n "${ODEV_TOKEN-}" ]] \
+  || die "set ODEV_HOST, ODEV_PROJECT and ODEV_TOKEN to open the PR"
+# api PATH [curl args...]: one OneDev REST call. The token goes in a header
+# read from a file descriptor, so it is on no command line.
+api() {
+  local path=$1
+  shift
+  curl -fsS --max-time 30 -H @<(printf 'Authorization: Bearer %s\n' "$ODEV_TOKEN") "$@" \
+    "${ODEV_HOST%/}/~api/$path"
+}
+
+branch="chore/update-deps-$(date +%Y-%m-%d)"
+git switch -c "$branch"
+git commit -qam "chore(deps): refresh dependencies within their ranges"
+git push -q -u origin "$branch"
+id=$(api "projects/ids/$ODEV_PROJECT")
+[[ "$id" =~ ^[1-9][0-9]*$ ]] || die "OneDev has no project $ODEV_PROJECT"
+base=$(api "repositories/$id/default-branch")
+[[ "$base" =~ ^[A-Za-z0-9._/-]+$ ]] || die "OneDev gave no usable default branch for $ODEV_PROJECT"
+# The title, the description and both branch names hold no quote or
+# backslash, so they go into the JSON as they are. The \n stay literal: JSON
+# reads them as line breaks.
+title='chore(deps): refresh dependencies within their ranges'
+desc='## Why\n\nThe weekly refresh: newer versions within the declared ranges, each at least seven days old.\n\n## Test plan\n\n- No new tests. The existing gate is the test of a dependency refresh.\n\n## Verification\n\n- CI runs the full gate on this PR. Merge only when it is green.'
+printf -v json '{"targetProjectId": %s, "sourceProjectId": %s, "targetBranch": "%s", "sourceBranch": "%s", "title": "%s", "description": "%s"}' \
+  "$id" "$id" "$base" "$branch" "$title" "$desc"
+# OneDev answers with the pull request's global id; its number is a read away.
+# OneDev pretty-prints JSON with a space before each colon.
+pull=$(printf '%s' "$json" | api pulls -H 'Content-Type: application/json' --data-binary @-)
+[[ "$pull" =~ ^[1-9][0-9]*$ ]] || die "OneDev did not open the PR: $pull"
+number=$(api "pulls/$pull" | sed -n 's/.*"number"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p')
+printf 'update-deps: opened PR #%s from %s\n' "${number:-?}" "$branch"

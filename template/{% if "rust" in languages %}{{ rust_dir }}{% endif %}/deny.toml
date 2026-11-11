@@ -1,0 +1,25 @@
+# cargo deny check: the full gate runs it. Seeded once by project-standards;
+# this repo owns it.
+
+[advisories]
+# Every RustSec advisory fails the gate: vulnerabilities, unsound, unmaintained
+# and yanked crates. Add an ignore entry with its reason only after a decision.
+ignore = []
+
+[licenses]
+# Add a licence only after a decision that it fits this project's own licence.
+allow = [
+  "Apache-2.0",
+  "BSD-3-Clause",
+  "ISC",
+  "MIT",
+  "Unicode-3.0",
+]
+
+[bans]
+multiple-versions = "allow"
+wildcards = "deny"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

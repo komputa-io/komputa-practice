@@ -1,0 +1,12 @@
+# Managed by project-standards.
+# Only versions at least seven days old. Let a security fix through with
+# min-release-age-exclude[]=<pkg>, then remove the line.
+min-release-age=7
+# Install scripts run only once approved; any other one fails the install.
+strict-allow-scripts=true
+# The approved ones: the npm_allow_scripts answer. To approve one more, add it
+# there and run copier update. (npm install-scripts approve <pkg> writes
+# package.json's allowScripts instead; either works, npm reads both.)
+{% if npm_allow_scripts %}allow-scripts={{ npm_allow_scripts | join(',') }}
+{% else %}# allow-scripts=sharp,protobufjs
+{% endif %}

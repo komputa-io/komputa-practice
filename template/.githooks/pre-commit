@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Runs the fast gate on staged files before each commit (budget: about 5 s).
+# The full gate runs in CI and before a PR. Do not skip this with --no-verify.
+# Managed by project-standards.
+set -Eeuo pipefail
+# Git sets GIT_DIR for a hook in a linked worktree. Then git treats the current
+# folder as the top, and the gate gets wrong paths in a project folder.
+unset GIT_DIR GIT_WORK_TREE
+exec "$(git rev-parse --show-toplevel)/scripts/gate.sh" --fast

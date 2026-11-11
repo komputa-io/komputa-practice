@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Refuses a push when the tree of any commit it sends holds a private item.
+# git gives one line per ref on stdin: local-ref local-sha remote-ref remote-sha.
+set -euo pipefail
+check=$(git rev-parse --show-toplevel)/scripts/scrub-check.sh
+zero=0000000000000000000000000000000000000000
+while read -r _ local_sha _ remote_sha; do
+  [[ $local_sha == "$zero" ]] && continue # a delete sends no tree
+  if [[ $remote_sha == "$zero" ]]; then
+    commits=$(git rev-list "$local_sha" --not --remotes)
+  else
+    commits=$(git rev-list "$remote_sha..$local_sha")
+  fi
+  for c in $commits; do
+    "$check" --rev "$c"
+  done
+done

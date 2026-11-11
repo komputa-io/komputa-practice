@@ -1,0 +1,9 @@
+# Managed by project-standards.
+[pytest]
+strict = true
+# Tests reach only the network they start: loopback is allowed, nothing else.
+addopts = ["-m", "not integration", "--allow-hosts=127.0.0.1,::1"]
+markers = [
+  "integration: starts Docker or calls a real upstream",
+  "slow: takes more than about a second",
+]

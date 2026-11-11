@@ -1,0 +1,7 @@
+{
+  "pythonVersion": "3.13",
+  "typeCheckingMode": "standard",
+  "reportMatchNotExhaustive": "error",
+  "reportUnnecessaryTypeIgnoreComment": "error",
+  "exclude": ["template", "**/node_modules", "**/__pycache__", "**/.*"]
+}

@@ -1,0 +1,47 @@
+# Managed by project-standards. Put repo-specific sections below the marker.
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 2
+
+[*.md]
+trim_trailing_whitespace = false
+
+[[shell]]
+indent_style = space
+indent_size = 2
+switch_case_indent = true
+binary_next_line = true
+{% if 'python' in languages %}
+[*.py]
+indent_size = 4
+{% endif %}{% if 'dotnet' in languages %}
+[*.{cs,csx}]
+indent_size = 4
+# Every change from the default, with its reason. Under latest-all no IDE rule fails the build until raised.
+dotnet_diagnostic.CA2007.severity = none        # ASP.NET Core has no SynchronizationContext; a library turns it back on
+dotnet_diagnostic.MA0004.severity = none        # Meziantou's ConfigureAwait rule, same reason
+dotnet_diagnostic.CA1812.severity = none        # DI-activated types look unused
+dotnet_diagnostic.CA1062.severity = none        # nullable reference types cover it
+dotnet_diagnostic.MA0097.severity = none        # Vogen value objects implement IComparable without operators
+dotnet_diagnostic.MA0191.severity = warning     # on: stops null! and default!
+dotnet_diagnostic.MA0053.severity = warning     # seal public classes too; CA1852 sees only internal ones
+MA0053.public_class_should_be_sealed = true
+dotnet_diagnostic.CA2254.severity = warning     # log message templates, never interpolation
+csharp_style_namespace_declarations = file_scoped:warning
+csharp_style_var_elsewhere = true:warning
+csharp_style_var_for_built_in_types = true:warning
+csharp_style_var_when_type_is_apparent = true:warning
+csharp_style_prefer_primary_constructors = true:warning
+dotnet_style_prefer_collection_expression = when_types_loosely_match:warning
+dotnet_diagnostic.IDE1006.severity = warning    # naming rules: _camelCase private fields; PascalCase const and static readonly
+
+[*.{csproj,props,targets,slnx}]
+indent_size = 2
+{% endif %}
+# ---- repo-specific sections below ----

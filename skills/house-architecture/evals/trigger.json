@@ -1,0 +1,22 @@
+[
+  {"query": "I want to add a workout templates feature to workout-review, where should the code go and how should I structure it?", "should_trigger": true},
+  {"query": "should this pricing logic live in the handler or in a shared domain core? two of the slices need it", "should_trigger": true},
+  {"query": "do we need a repository class for the orders table or can the handler just use the DbContext?", "should_trigger": true},
+  {"query": "design the module layout for a new python CLI that syncs garmin data into our warehouse", "should_trigger": true},
+  {"query": "this endpoint throws an exception when the user isn't found, is that right or should it return something?", "should_trigger": true},
+  {"query": "review this PR against our architecture rules, it adds an IWorkoutService interface with one implementation", "should_trigger": true},
+  {"query": "how do I make sure every query in mediahub only returns the current user's data?", "should_trigger": true},
+  {"query": "I need to rename the --scene flag on the odev CLI, how do I do it without breaking the skills that call it?", "should_trigger": true},
+  {"query": "should the scene id just be a string or its own type?", "should_trigger": true},
+  {"query": "plan the refactor of api.py, it's 6000 lines and every feature touches it", "should_trigger": true},
+  {"query": "add a span and a duration histogram to the grab handler", "should_trigger": false},
+  {"query": "the garmin client keeps getting 429s, how should the retries work?", "should_trigger": false},
+  {"query": "fix the shellcheck warnings in deploy.sh", "should_trigger": false},
+  {"query": "turn on nullable reference types and fix the warnings in the hevy project", "should_trigger": false},
+  {"query": "write the README for the subs CLI", "should_trigger": false},
+  {"query": "why is the test suite taking 15 minutes in CI?", "should_trigger": false},
+  {"query": "open a PR for this branch and merge it when green", "should_trigger": false},
+  {"query": "the Library page button is misaligned on mobile, fix the CSS", "should_trigger": false},
+  {"query": "bump the EF Core package to the latest version", "should_trigger": false},
+  {"query": "write a commit message for these changes", "should_trigger": false}
+]

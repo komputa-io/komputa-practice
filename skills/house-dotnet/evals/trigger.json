@@ -1,0 +1,82 @@
+[
+  {
+    "query": "add a CreateGoal minimal API endpoint to the acme .NET API with validation and the right error responses",
+    "should_trigger": true
+  },
+  {
+    "query": "set up a new .NET 10 solution for a service with Aspire, EF Core and Postgres",
+    "should_trigger": true
+  },
+  {
+    "query": "write TUnit tests for the GoalHandler that hit a real Postgres database",
+    "should_trigger": true
+  },
+  {
+    "query": "should GoalId be a readonly record struct or a Vogen value object?",
+    "should_trigger": true
+  },
+  {
+    "query": "configure the http client for the garmin api in ServiceDefaults with the resilience handler",
+    "should_trigger": true
+  },
+  {
+    "query": "the build fails with CA2254 on my logging calls, what's the house way to fix it?",
+    "should_trigger": true
+  },
+  {
+    "query": "add a global query filter so each user only sees their own workouts in EF Core",
+    "should_trigger": true
+  },
+  {
+    "query": "update Directory.Packages.props to the new OpenTelemetry versions",
+    "should_trigger": true
+  },
+  {
+    "query": "review this C# PR, it adds an IGoalRepository and uses Moq in the tests",
+    "should_trigger": true
+  },
+  {
+    "query": "fan out the 20k scene lookups in the C# sync job without flooding the database",
+    "should_trigger": true
+  },
+  {
+    "query": "where should the pricing logic go, the handler or a shared core?",
+    "should_trigger": false
+  },
+  {
+    "query": "add type hints and a pytest for the python garmin client",
+    "should_trigger": false
+  },
+  {
+    "query": "the Next.js page shows stale data after a mutation, fix the TanStack Query cache",
+    "should_trigger": false
+  },
+  {
+    "query": "what spans and metrics should the grab service emit?",
+    "should_trigger": false
+  },
+  {
+    "query": "write a bash script that backs up the postgres container nightly",
+    "should_trigger": false
+  },
+  {
+    "query": "analyse this msbuild binlog, the build is slow",
+    "should_trigger": false
+  },
+  {
+    "query": "open a PR for the hevy branch and merge it when CI is green",
+    "should_trigger": false
+  },
+  {
+    "query": "write an ADR for choosing Temporal over Hangfire",
+    "should_trigger": false
+  },
+  {
+    "query": "why does the docs stage of the deploy get killed for memory?",
+    "should_trigger": false
+  },
+  {
+    "query": "explain what a deep module is",
+    "should_trigger": false
+  }
+]

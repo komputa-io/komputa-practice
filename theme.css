@@ -1,0 +1,16 @@
+/* On a phone, let table cells wrap so a table does not scroll sideways. */
+@media (max-width: 640px) {
+  table {
+    display: table;
+    width: 100%;
+    table-layout: auto;
+  }
+  th,
+  td {
+    white-space: normal;
+    overflow-wrap: break-word;
+  }
+  td code {
+    overflow-wrap: anywhere;
+  }
+}

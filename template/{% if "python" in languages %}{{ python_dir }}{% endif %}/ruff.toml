@@ -1,0 +1,7 @@
+# Managed by project-standards. The repo's own additions go in extend-select.
+line-length = 100
+# Markdown quotes code as it was; formatting would rewrite the quotes.
+extend-exclude = ["*.md"]
+
+[lint]
+select = ["F", "E9", "B", "W291", "BLE001", "RUF100", "RUF006", "G", "DTZ", "PLR0915", "S113", "TID251", "ASYNC"]

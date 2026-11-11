@@ -1,0 +1,5 @@
+# Pins the toolchain that CI's rust:{{ rust_version }} image runs, so clippy and rustfmt
+# give the same answer on every machine. Seeded once by project-standards.
+[toolchain]
+channel = "{{ rust_version }}"
+components = ["clippy", "rustfmt"]

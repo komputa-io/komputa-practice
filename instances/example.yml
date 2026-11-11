@@ -1,0 +1,11 @@
+# An environment file: the answers that are the same for every repo in one
+# environment, and that the shareable template must not hold. Copy it outside
+# this repo (for example to your machine-config repo), fill it in, and pass it
+# to every Copier run:
+#   copier copy --data-file <your copy> <this repo's URL> <repo>
+#   copier update --data-file <your copy>
+# After the first run each repo's .copier-answers.yml keeps the values.
+
+# The command that reads one secret on a workstation, named in the gate's and
+# CI's messages. For example your password manager's CLI.
+vault_command: <your secret command>

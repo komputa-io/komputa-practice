@@ -1,0 +1,23 @@
+{
+  "name": "komputa-practice-docs",
+  "private": true,
+  "type": "module",
+  "description": "The documentation site for the Komputa agent practice, built with Blume",
+  "engines": {
+    "node": ">=22.19"
+  },
+  "scripts": {
+    "docs:reference": "bash scripts/docs-reference.sh",
+    "docs:prepare": "node scripts/docs-prepare.mjs",
+    "docs:dev": "npm run docs:prepare && ASTRO_TELEMETRY_DISABLED=1 blume dev",
+    "docs:build": "npm run docs:prepare && ASTRO_TELEMETRY_DISABLED=1 blume build",
+    "docs:check": "ASTRO_TELEMETRY_DISABLED=1 blume validate",
+    "docs:smoke": "node scripts/docs-smoke.mjs"
+  },
+  "devDependencies": {
+    "blume": "^2.2.6"
+  },
+  "overrides": {
+    "@astrojs/react": "7.0.1"
+  }
+}

@@ -1,0 +1,22 @@
+[
+  {"query": "pin the shared template in azure-pipelines.yml so a change upstream can't break us", "should_trigger": true},
+  {"query": "add a retry with backoff to the upstream API call in this service", "should_trigger": false},
+  {"query": "add a deploy job to .onedev-buildspec.yml that runs helm upgrade", "should_trigger": true},
+  {"query": "the helm release failed halfway and left the cluster in a mess, make the pipeline handle that", "should_trigger": true},
+  {"query": "set up the terraform pipeline so we see the plan on the PR before it applies", "should_trigger": true},
+  {"query": "what naming pattern should these Azure resources use in the bicep?", "should_trigger": true},
+  {"query": "should the build agents be long lived or fresh per job? client is on Azure DevOps", "should_trigger": true},
+  {"query": "add a ZAP scan to the pipeline and get the findings into the tracker", "should_trigger": true},
+  {"query": "the deploy job has a long lived service principal secret, how should it authenticate instead?", "should_trigger": true},
+  {"query": "we rebuild the image for staging and prod, change the pipeline to promote it", "should_trigger": true},
+  {"query": "turn the dev environment off at night and at weekends, it costs too much", "should_trigger": true},
+  {"query": "write a bash script that backs up the postgres container nightly", "should_trigger": false},
+  {"query": "add /health and /alive endpoints to this service", "should_trigger": false},
+  {"query": "the nightly job never fires its alert, fix the monitor", "should_trigger": false},
+  {"query": "why did build #412 fail on OneDev?", "should_trigger": false},
+  {"query": "open a PR and merge it when the checks pass", "should_trigger": false},
+  {"query": "how should this project do semver and where does the version live?", "should_trigger": false},
+  {"query": "add a lock file and a weekly bump for the NuGet packages", "should_trigger": false},
+  {"query": "right-size the memory on the homelab LXCs from Prometheus", "should_trigger": false},
+  {"query": "run a security review of the auth code in this branch", "should_trigger": false}
+]

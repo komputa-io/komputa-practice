@@ -1,0 +1,7 @@
+line-length = 100
+# archive/ holds retired work that no check covers.
+extend-exclude = ["archive"]
+
+# The house skills keep their Markdown examples compact on purpose, as agent-skills did.
+[format]
+exclude = ["skills/**/*.md"]

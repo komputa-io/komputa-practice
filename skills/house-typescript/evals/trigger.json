@@ -1,0 +1,22 @@
+[
+  {"query": "add a goals page to the acme Next.js app that lists the user's goals", "should_trigger": true},
+  {"query": "the React component fetches data in useEffect and flickers, fix it", "should_trigger": true},
+  {"query": "write vitest tests for the goals form without hitting the real API", "should_trigger": true},
+  {"query": "add a Server Action that saves the user's settings", "should_trigger": true},
+  {"query": "regenerate the API client types after the backend added an endpoint", "should_trigger": true},
+  {"query": "review this TypeScript PR, it uses interface, enum and vi.mock", "should_trigger": true},
+  {"query": "bump next and react in package.json", "should_trigger": true},
+  {"query": "how should the TanStack query retry when the API returns 429?", "should_trigger": true},
+  {"query": "make GoalId a branded type so it can't be mixed up with WorkoutId in the frontend", "should_trigger": true},
+  {"query": "write an MCP server in TypeScript that exposes our scene search", "should_trigger": true},
+  {"query": "where should the matching logic live, a slice or a shared core?", "should_trigger": false},
+  {"query": "add a TUnit test for the GoalHandler", "should_trigger": false},
+  {"query": "write pytest tests for the hevy client", "should_trigger": false},
+  {"query": "which spans and metrics should the grab service emit?", "should_trigger": false},
+  {"query": "write a bash script to rotate the backup files", "should_trigger": false},
+  {"query": "open a PR for this branch and merge it when CI is green", "should_trigger": false},
+  {"query": "write a commit message for these changes", "should_trigger": false},
+  {"query": "explain what a deep module is", "should_trigger": false},
+  {"query": "add an EF Core migration for the goals table", "should_trigger": false},
+  {"query": "the docs build is killed for memory on the build server, why?", "should_trigger": false}
+]
