@@ -1,34 +1,39 @@
 ---
 title: The life of a program
-description: One program from the plan to the retirement of its lead, and the check at each step.
+description: One program from the plan to the hand over, in one session, and the check at each step.
 ---
 
-A program is a set of pull requests that one lead drives. The lead plans, briefs, starts owners, verifies and merges. It never writes the code that it verifies.
+A program is a set of pull requests that one Claude Code session drives. The session plans, builds, verifies and merges one pull request at a time. For a change that a user sees, a verifier subagent checks the work, because the session that wrote it does not.
 
-![The life of a program: plan, brief, start, build and report, verify, merge, finish, hand over, retire. Each step names the rule or check that holds it.](/figures/life-of-a-program.png)
+<img class="figure-light" src="/figures/life-of-a-program.png" alt="The life of a program: plan, build, verify, merge, hand over. Each step names the rule or check that holds it. Verify and merge are where something other than the author checks the work.">
+<img class="figure-dark" src="/figures/life-of-a-program-dark.png" alt="The life of a program: plan, build, verify, merge, hand over. Each step names the rule or check that holds it. Verify and merge are where something other than the author checks the work.">
 
 ## The steps
 
 | Step | What happens | What holds it |
 |---|---|---|
-| 1. Plan | The lead puts each pull request in a tier and states the size before the operator's go. | The tier table in the [rules](/reference/rules). |
-| 2. Brief | The lead writes one brief to `.audit/<task>.brief.md`. It holds the goal, the worktree, the definition of done, a budget and the report contract. It names the risks that the tests cover. | The "Delegated build work" rules. |
-| 3. Start | The lead starts each owner. The role line in `pstack-models.md` sets the model. The lead answers the folder trust question. | The role lines. See [Model selection](/explanation/model-selection). |
-| 4. Build and report | The owner builds one pull request in its own worktree. It pushes its branch and drives CI to green. It writes a report file, then sends one short message. | `block-dangerous-git.sh`, `block-operator-screen.sh`, `block-test-weakening.sh`. |
-| 5. Verify | A verifier agent runs the acceptance checks on the real artifact and reads the diff. A finding counts only when a run shows it. | The tier 2 and tier 3 rows of the tier table. |
-| 6. Merge | The lead merges when every check passed at the head commit. A change to a live service waits for the operator's yes. | The checks at the head commit. |
-| 7. Finish | The lead closes the owner's pane. | The report file: the lead closes a pane only after it. |
-| 8. Hand over | When the lead's context passes the lead cap, it writes a handoff. A fresh lead starts from it. | The lead's budget in the rules. |
-| 9. Retire | The old lead ends only after its workers end. | The lead. |
+| 1. Plan | The session puts each pull request in a tier and states the size before the operator's go. | The tier table in the [rules](/reference/rules). |
+| 2. Build | The session builds one pull request on its own branch. It writes the tests that the risks need and runs the gate. | "Tests follow risk" in the rules, the [hooks](/reference/hooks) and `scripts/gate.sh`. |
+| 3. Verify | Tier 1: the session runs the real behaviour once. Tier 2 and up: a verifier subagent runs the acceptance checks on the real artifact and reads the diff. A finding counts only when a run shows it. | The tier table. |
+| 4. Merge | The session merges when every check passed at the head commit. A change to a live service waits for the operator's yes. | The checks at the head commit. |
+| 5. Hand over | When the context nears 250k tokens, the session writes a handoff file. A fresh session starts from it, not from the old conversation. | The [watcher](/explanation/the-watcher) asks for the handoff when nobody watches. |
 
-## A program that runs for hours
+Steps 2 to 4 repeat for each pull request. The next one starts from the merged result, so each review stays small.
 
-The service that started a quiet lead again from its newest handoff is in `archive/herdr/` since 10 November 2026. Nothing runs it.
+## When a worker runs in a pane
+
+Sometimes you want to watch a long build, or run it beside other work. Then the session becomes a lead and starts a worker with [herdr](/reference/skills). The steps change in three places:
+
+- **Brief.** The lead writes the goal, the branch, the risks and the report contract to `.audit/<task>.brief.md`. One brief holds about two deliverables.
+- **Build and report.** The worker builds in its own worktree, then writes a report file and sends the lead one short message. The lead reads the report and checks it against the repo before it merges.
+- **Finish.** The lead closes the worker's pane after the final report. A lead that hands over ends only after its workers end.
+
+The lead rules in [Lead rules](/reference/lead-rules) hold these steps.
 
 ## The limits that keep it cheap
 
-- One brief holds about two deliverables, so an owner finishes under about 200k tokens.
+- A session hands over near 250k tokens.
+- A worker's brief holds about two deliverables, so the worker finishes under about 200k tokens.
 - A worker whose context passes 300k tokens finishes its unit and reports `PARTIAL`.
-- A lead hands over near 250k tokens.
 
 [Context economics](/explanation/context-economics) has the numbers behind these limits.

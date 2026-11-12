@@ -15,7 +15,9 @@
     "docs:smoke": "node scripts/docs-smoke.mjs"
   },
   "devDependencies": {
-    "blume": "^2.2.6"
+    "@astrojs/cloudflare": "14.4.4",
+    "blume": "^2.2.6",
+    "wrangler": "4.157.0"
   },
   "overrides": {
     "@astrojs/react": "7.0.1"

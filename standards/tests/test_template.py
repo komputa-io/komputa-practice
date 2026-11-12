@@ -93,7 +93,11 @@ FORGE_FILES = {
         ".onedev-buildspec.yml",
         "scripts/forge/onedev.sh",
     ],
-    "github": [".github/pull_request_template.md", "scripts/forge/github.sh"],
+    "github": [
+        ".github/pull_request_template.md",
+        ".github/workflows/gate.yml",
+        "scripts/forge/github.sh",
+    ],
 }
 
 
@@ -141,6 +145,8 @@ def test_each_combination_has_the_common_files_and_only_its_own_bundles(tmp_path
     out = render_combo(tmp_path, name)
     for f in COMMON_FILES + FORGE_FILES["onedev"]:
         assert (out / f).is_file(), f
+    for f in FORGE_FILES["github"]:
+        assert not (out / f).exists(), f
     for bundle, files in BUNDLE_FILES.items():
         folder = out / str(EXTRA.get(name, {}).get(BUNDLE_DIR[bundle], "."))
         for f in files:
@@ -1239,6 +1245,40 @@ def test_a_github_repo_gets_the_github_files_and_no_onedev_ones(tmp_path):
     script = str(out / "scripts/forge/github.sh")
     subprocess.run(["shellcheck", "--rcfile", str(out / ".shellcheckrc"), script], check=True)
     subprocess.run(["shfmt", "-d", "-i", "2", "-ci", "-bn", script], check=True)
+
+
+def test_github_ci_runs_the_whole_gate_in_one_job_when_one_image_has_every_tool(tmp_path):
+    out = render(tmp_path / "p", ["python", "shell"], forge="github")
+    jobs = yaml.safe_load((out / ".github/workflows/gate.yml").read_text())["jobs"]
+    assert list(jobs) == ["gate"]
+    assert jobs["gate"]["container"].startswith("ghcr.io/astral-sh/uv:python")
+    assert jobs["gate"]["steps"][-1]["run"] == "scripts/gate.sh --full"
+    assert "env" not in jobs["gate"]
+
+
+def test_github_ci_runs_each_language_in_its_own_job_with_its_logins(tmp_path):
+    out = render(
+        tmp_path / "p", COMBOS["subfolders"], forge="github", **EXTRA["subfolders"], **PRIVATE
+    )
+    jobs = yaml.safe_load((out / ".github/workflows/gate.yml").read_text())["jobs"]
+    assert [j["name"] for j in jobs.values()] == [
+        "Gate Python",
+        "Gate .NET",
+        "Gate TypeScript",
+        "Gate shell and local",
+    ]
+    runs = {k: [s["run"] for s in j["steps"] if "run" in s] for k, j in jobs.items()}
+    assert jobs["gate-dotnet"]["container"].startswith("mcr.microsoft.com/dotnet/sdk")
+    assert runs["gate-dotnet"][-1] == "scripts/gate.sh --only dotnet"
+    assert runs["gate-typescript"][-2:] == [
+        "cd 'frontend' && npm ci --no-audit --no-fund",
+        "scripts/gate.sh --only typescript",
+    ]
+    assert runs["gate-shell"][-1] == "scripts/gate.sh --only shell --only local"
+    assert set(jobs["gate-python"]["env"].values()) == {
+        "${{ secrets.PKG_USER }}",
+        "${{ secrets.PKG_TOKEN }}",
+    }
 
 
 def test_the_refresh_opens_its_pr_through_gh_on_github(tmp_path):

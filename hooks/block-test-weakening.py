@@ -23,7 +23,8 @@ A test path is a path with a `tests` folder, or a file named `test_*`, `*_test.*
 (any letter case), by its own name or by the real path behind a symlink. A Bash command may touch a path that
 is under a `__pycache__`, `.pytest_cache`, `node_modules`, `build` or `dist` folder, a `*.pyc`, `*.log` or
 `*.txt` file, or a path outside the git tree of the call.
-A value of HERDR_TEST_PRUNE set inside the command text does not count: the gate reads its own environment.
+A value of HERDR_TEST_PRUNE set inside the command text does not count: the gate reads its own environment,
+which block-test-weakening.sh sets from the terminal's test-prune label.
 """
 
 from __future__ import annotations
@@ -72,7 +73,7 @@ def refuse(kind: str, what: str, advice: str) -> None:
 
 DELETE_ADVICE = (
     "A worker never deletes or weakens a test to get green: fix the code, or ask the lead. A reviewed prune "
-    "starts the pruning worker with HERDR_TEST_PRUNE=1."
+    "starts the pruning worker with hc run --label test-prune=1."
 )
 WRITE_ADVICE = (
     "A worker changes a test with the Edit tool, which checks for a skip or an emptied file: fix the code, "

@@ -1,0 +1,105 @@
+{%- set langs = [] -%}
+{%- for l in ['python', 'dotnet', 'typescript', 'rust'] if l in languages -%}{%- set _ = langs.append(l) -%}{%- endfor -%}
+{#- The same images as the OneDev build spec. No image holds .NET, Node or Rust
+    beside uv, so those split the gate: one job per section, each in its own
+    image. Python and shell share the uv image. -#}
+{%- set split = 'dotnet' in languages or 'typescript' in languages or 'rust' in languages -%}
+{%- set images = {
+  'python': 'ghcr.io/astral-sh/uv:python' ~ (python_floor | default('3.13')) ~ '-bookworm',
+  'dotnet': 'mcr.microsoft.com/dotnet/sdk:10.0',
+  'typescript': 'node:24-bookworm',
+  'rust': 'rust:' ~ (rust_version | default('1.89.0')) ~ '-bookworm',
+  'shell': 'ghcr.io/astral-sh/uv:bookworm',
+} -%}
+{%- set names = {'python': 'Python', 'dotnet': '.NET', 'typescript': 'TypeScript', 'rust': 'Rust'} -%}
+{%- macro pyenv() %}
+{%- if private_index %}
+    # The private package index needs a login. PKG_USER and PKG_TOKEN are
+    # repository secrets from a read-only account.
+    env:
+      UV_INDEX_{{ private_index_name | upper | replace('-', '_') }}_USERNAME: {% raw %}${{ secrets.PKG_USER }}{% endraw %}
+      UV_INDEX_{{ private_index_name | upper | replace('-', '_') }}_PASSWORD: {% raw %}${{ secrets.PKG_TOKEN }}{% endraw %}
+{%- endif %}
+{%- endmacro %}
+{%- macro nugetenv() %}
+{%- if nuget_feed %}
+    # The private NuGet feed needs a login: the repository secrets NUGET_USER
+    # and NUGET_TOKEN, from a read-only account. nuget.config reads these.
+    env:
+      NUGET_{{ nuget_feed_name | upper | replace('-', '_') }}_USERNAME: {% raw %}${{ secrets.NUGET_USER }}{% endraw %}
+      NUGET_{{ nuget_feed_name | upper | replace('-', '_') }}_PASSWORD: {% raw %}${{ secrets.NUGET_TOKEN }}{% endraw %}
+{%- endif %}
+{%- endmacro %}
+{%- macro checkout() %}
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+{%- endmacro -%}
+# CI runs the gate on every pull request into main and on every push to main.
+# It has no build or deploy step. {% if private_index or nuget_feed %}Its only secrets are the read-only logins
+# for the private package {% if private_index and nuget_feed %}index and feed{% elif private_index %}index{% else %}feed{% endif %}.{% else %}It asks for no secret.{% endif %} Add deploy jobs
+# below it; this file is seeded once and then belongs to the repo.
+name: gate
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gate-{% raw %}${{ github.ref }}{% endraw %}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+{%- if not split %}
+  gate:
+    name: Gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    container: {{ images['python' if 'python' in languages else 'shell'] }}
+{{- pyenv() }}
+    steps:
+{{- checkout() }}
+      # The checkout belongs to the runner's user, not the container's root.
+      - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - run: scripts/gate.sh --full
+{%- else %}
+{%- for l in langs %}
+  gate-{{ l }}:
+    name: Gate {{ names[l] }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    container: {{ images[l] }}
+{%- if l == 'python' %}{{ pyenv() }}{% elif l == 'dotnet' %}{{ nugetenv() }}{% endif %}
+    steps:
+{{- checkout() }}
+      - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+{%- if l == 'typescript' %}
+      - run: cd '{{ node_dir }}' && npm ci --no-audit --no-fund
+{%- elif l == 'rust' %}
+      # The image has no clippy, rustfmt or cargo-deny.
+      - run: rustup component add clippy rustfmt && scripts/install-cargo-deny.sh
+{%- endif %}
+      - run: scripts/gate.sh --only {{ l }}
+{%- endfor %}
+  # Shell checks and the repo's own scripts/gate.local.sh. Give this job an
+  # image with what gate.local.sh needs.
+  gate-shell:
+    name: Gate shell and local
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    container: {{ images['shell'] }}
+    steps:
+{{- checkout() }}
+      - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - run: scripts/gate.sh --only shell --only local
+{%- endif %}

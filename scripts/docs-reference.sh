@@ -3,7 +3,7 @@
 #   scripts/docs-reference.sh [OUTPUT_FILE]
 # It reads hooks/*. A header is the run of comment
 # lines right after the shebang line. The page says only what a header says.
-# The default output is .site/reference/scripts.md (the build folder, ignored
+# The default output is .site/reference/hooks.md (the build folder, ignored
 # by git). Run `npm run docs:build` and the page is fresh.
 # Exit codes: 0 written, 1 a script has no header comment, 2 wrong arguments.
 set -Eeuo pipefail
@@ -15,7 +15,7 @@ trap 'printf "%s: line %d: %s exited %d\n" "${0##*/}" "$LINENO" "$BASH_COMMAND" 
   exit 2
 }
 cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.."
-out=${1:-.site/reference/scripts.md}
+out=${1:-.site/reference/hooks.md}
 mkdir -p -- "$(dirname -- "$out")"
 
 # header FILE: the comment block after the shebang, with "# " removed. A

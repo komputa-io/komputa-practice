@@ -3,7 +3,8 @@ title: The quality funnel
 description: Five layers that catch a mistake, and the rule to catch each one at the highest layer.
 ---
 
-![A funnel of five layers that catch mistakes: codebase, static analysis, verification, prose and human review, with an arrow that moves each lesson up.](/figures/quality-funnel.png)
+<img class="figure-light" src="/figures/quality-funnel.png" alt="A funnel of five layers that catch mistakes: codebase, static analysis, verification, prose and human review, with an arrow that moves each lesson up.">
+<img class="figure-dark" src="/figures/quality-funnel-dark.png" alt="A funnel of five layers that catch mistakes: codebase, static analysis, verification, prose and human review, with an arrow that moves each lesson up.">
 
 Catch each mistake as high in the funnel as you can. A higher layer works when nobody reads it. A lower layer depends on a reader.
 

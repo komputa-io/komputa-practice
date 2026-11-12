@@ -87,6 +87,7 @@ step shfmt tool --from shfmt-py shfmt -d -- "${scripts[@]}"
 step 'ruff format' tool ruff format --check .
 step 'ruff check' tool ruff check .
 step 'js syntax' js_syntax
+step 'skill refs' scripts/check-skill-refs.sh
 step 'shell tests' run_tests
 
 printf '\n'

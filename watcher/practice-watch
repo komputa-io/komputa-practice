@@ -1,0 +1,233 @@
+#!/usr/bin/env bash
+# The practice's one watcher: keeps a long agent session going while nobody watches it, for example overnight.
+# A session joins by a label on its own hc terminal, so the watcher keeps no files of its own. The user timer that
+# watcher/watcherctl installs runs `practice-watch pass --apply` every 5 minutes.
+#   practice-watch on [TERMINAL]       watch it (label watch=on); resets its nudge count and handoff request. Default: $HC_TERMINAL_ID
+#   practice-watch waits [TERMINAL]    it waits for the operator (watch=waits): no nudges until `on` again
+#   practice-watch off [TERMINAL]      stop watching it (removes the watch labels)
+#   practice-watch status              each watched terminal, its state and its nudge count
+#   practice-watch handover FILE [TERMINAL] [--apply]
+#                                      start a fresh session that continues from handoff FILE, in the same folder,
+#                                      space and tab, with the same command, on the watch; the old one stays open,
+#                                      off the watch. Without --apply it prints what it would do.
+#   practice-watch pass [--apply]      one pass; without --apply it prints what it would do and changes nothing
+# For each terminal labelled watch=on, one pass does one of these:
+#   - working, or idle or done for less than WATCH_QUIET_MIN minutes (default 30): nothing;
+#   - idle or done for longer: a nudge (hc send) that says carry on, take the default on a reversible question, or
+#     label itself watch=waits or watch= ; at most WATCH_MAX_NUDGES nudges (default 12) until `on` again;
+#   - blocked on a prompt, out of nudges, or ended: an alert, once for each such state.
+# Before a nudge, a live session that is not blocked and whose status line shows a context (`ctx 260k`) above
+# WATCH_CTX_K thousand tokens (default 250) is asked, once until `on` again, to write a handoff at its next quiet
+# point and then run `practice-watch handover`. Each turn rereads the whole context, so a big one costs on every turn.
+# hc send waits while a person has a half-typed message in the box, and never types into a blocked prompt. An alert
+# is one line on stdout (the journal) and, when WATCH_ALERT_CMD is set, that command with the text as $1.
+# When hc does not answer, a pass decides nothing. One flock keeps two passes from overlapping. Every hc call and
+# the alert command have a timeout (WATCH_CALL_TIMEOUT seconds, default 30; a send gets 4 times that).
+# Exit codes: 0 done (also when another pass holds the lock); 1 an error; 2 misuse.
+set -Eeuo pipefail
+shopt -s inherit_errexit
+trap 'printf "%s: line %d: %s exited %d\n" "${0##*/}" "$LINENO" "$BASH_COMMAND" "$?" >&2' ERR
+die() {
+  printf 'practice-watch: %s\n' "$1" >&2
+  exit "${2:-1}"
+}
+usage() {
+  printf 'usage: practice-watch on|waits|off [TERMINAL] | status | pass [--apply] | handover FILE [TERMINAL] [--apply]\n' >&2
+  exit 2
+}
+
+quiet_min=${WATCH_QUIET_MIN:-30}
+max_nudges=${WATCH_MAX_NUDGES:-12}
+call_timeout=${WATCH_CALL_TIMEOUT:-30}
+ctx_k=${WATCH_CTX_K:-250}
+for n in "$quiet_min" "$max_nudges" "$call_timeout" "$ctx_k"; do
+  [[ $n =~ ^[1-9][0-9]*$ ]] || die "WATCH_QUIET_MIN, WATCH_MAX_NUDGES, WATCH_CALL_TIMEOUT and WATCH_CTX_K take a whole number above 0" 2
+done
+command -v jq >/dev/null || die "jq is missing"
+command -v hc >/dev/null || die "hc is missing"
+
+hcc=(timeout "$call_timeout" hc)
+me="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/practice-watch"
+# WATCH_NOW_MS fixes the clock for the tests: a clock step between their read and this one turns 40 idle minutes into 39 or 41 (#123).
+now_ms() { if [[ -n ${WATCH_NOW_MS-} ]]; then printf '%s' "$WATCH_NOW_MS"; else date +%s%3N; fi; }
+
+# terminal ARG: the terminal named, or this session's own.
+terminal() {
+  local t=${1:-${HC_TERMINAL_ID-}}
+  [[ -n $t ]] || die "name a terminal; outside an hc terminal there is no default" 2
+  printf '%s' "$t"
+}
+
+alert() { # alert TEXT
+  printf 'practice-watch: ALERT %s\n' "$1"
+  if [[ -n ${WATCH_ALERT_CMD-} ]]; then
+    timeout "$call_timeout" "$WATCH_ALERT_CMD" "$1" </dev/null || printf 'practice-watch: the alert command failed\n' >&2
+  fi
+}
+
+# decide INFO: one word for what a pass does with the terminal that `hc get --json` described.
+decide() {
+  jq -r --argjson now "$(now_ms)" --argjson quiet "$((quiet_min * 60000))" --argjson max "$max_nudges" '
+    (.labels["watch.nudges"] // "0" | tonumber? // 0) as $n
+    | (.status | if type == "object" then .state else . end // "") as $s
+    | if .state != "live" then "alert-ended"
+      elif $s == "working" then "none"
+      elif $s == "blocked" then "alert-blocked"
+      elif ($s == "idle" or $s == "done") | not then "none"
+      elif ($now - (.status_ms // $now)) < $quiet then "none"
+      elif $n >= $max then "alert-out-of-nudges"
+      else "nudge" end' <<<"$1"
+}
+
+nudge_text() { # nudge_text ADDRESS MINUTES N
+  printf '%s' "[practice-watch] This session has been idle for $2 minutes, and it is on the watch for unattended work (nudge $3 of $max_nudges). If work remains, carry on with the plan: take the default on any reversible question and say which one you took. If only the operator can decide what comes next, say why and run: hc label $1 watch=waits. If the work is finished, run: hc label $1 watch="
+}
+
+# context_k ADDRESS: the context in thousands of tokens, from the status line on its screen; nothing if none shows.
+context_k() {
+  "${hcc[@]}" read "$1" 2>/dev/null | grep -oE 'ctx [0-9]+k' | tail -1 | tr -dc '0-9' || true
+}
+
+handoff_text() { # handoff_text ADDRESS K
+  printf '%s' "[practice-watch] This session's context is ${2}k tokens, past the ${ctx_k}k cap, and every turn rereads all of it. At the next quiet point (no agent report waiting, no merge half done), write a handoff so a fresh session continues from it. Then tell the operator where the handoff is and run: $me handover <the handoff file> $1 --apply . That starts the fresh session and takes this one off the watch. If you cannot write a handoff, say why and run: hc label $1 watch=waits"
+}
+
+handover() { # handover FILE TERMINAL APPLY
+  local file=$1 t=$2 apply=$3 info cwd label v new
+  local -a argv labels=(--label watch=on)
+  [[ -f $file ]] || die "no handoff file at $file" 2
+  file=$(realpath -- "$file")
+  info=$("${hcc[@]}" get "$t" --json) || die "hc get $t did not answer"
+  cwd=$(jq -r '.foreground.cwd // .cwd' <<<"$info")
+  mapfile -t argv < <(jq -r '.foreground.argv // ["claude"] | .[]' <<<"$info")
+  for label in herdr.space herdr.tab; do
+    v=$(jq -r --arg l "$label" '.labels[$l] // ""' <<<"$info")
+    [[ -n $v ]] && labels+=(--label "$label=$v")
+  done
+  argv+=("Continue the work from the handoff at $file. Read it first. This session is on the practice watch.")
+  if ((! apply)); then
+    printf 'practice-watch: would start in %s: %s\n' "$cwd" "${argv[*]}"
+    printf 'practice-watch: would take %s off the watch; to apply: practice-watch handover %s %s --apply\n' "$t" "$file" "$t"
+    return 0
+  fi
+  new=$("${hcc[@]}" run --json --bg --no-parent --cwd "$cwd" "${labels[@]}" -- "${argv[@]}" | jq -r '.address // ""') || new=
+  [[ -n $new ]] || die "hc run did not start the fresh session; $t stays on the watch"
+  "${hcc[@]}" label "$t" watch= watch.nudges= watch.alerted= watch.handoff= >/dev/null
+  printf 'practice-watch: started %s from %s; %s is off the watch and stays open\n' "$new" "$file" "$t"
+}
+
+pass() {
+  local apply=$1 list addr info action n mins key text k
+  list=$("${hcc[@]}" ls --all --label watch=on --json) || {
+    printf 'practice-watch: hc did not answer; nothing decided this pass\n' >&2
+    return 0
+  }
+  for addr in $(jq -r '.terminals[].address' <<<"$list"); do
+    info=$("${hcc[@]}" get "$addr" --json) || {
+      printf 'practice-watch: %s: hc get did not answer; skipped\n' "$addr" >&2
+      continue
+    }
+    action=$(decide "$info")
+    n=$(jq -r '.labels["watch.nudges"] // "0" | tonumber? // 0' <<<"$info")
+    # A big context: ask once for a handoff. It takes the place of this pass's nudge, since it wakes the session too.
+    if [[ $action == none || $action == nudge ]] && [[ -z $(jq -r '.labels["watch.handoff"] // ""' <<<"$info") ]]; then
+      k=$(context_k "$addr")
+      if [[ -n $k ]] && ((k > ctx_k)); then
+        text=$(handoff_text "$addr" "$k")
+        if ((! apply)); then
+          printf 'practice-watch: %s: would ask for a handoff (context %sk, cap %sk)\n' "$addr" "$k" "$ctx_k"
+        elif timeout "$((call_timeout * 4))" hc send "$addr" "$text" >/dev/null; then
+          "${hcc[@]}" label "$addr" "watch.handoff=${k}k" >/dev/null
+          printf 'practice-watch: %s: asked for a handoff (context %sk, cap %sk)\n' "$addr" "$k" "$ctx_k"
+        else
+          printf 'practice-watch: %s: the handoff request was not sent; the next pass tries again\n' "$addr" >&2
+        fi
+        continue
+      fi
+    fi
+    case $action in
+      none) printf 'practice-watch: %s: nothing to do\n' "$addr" ;;
+      nudge)
+        mins=$((($(now_ms) - $(jq -r '.status_ms' <<<"$info")) / 60000))
+        if ((! apply)); then
+          printf 'practice-watch: %s: would nudge (idle %s min, nudge %s of %s)\n' "$addr" "$mins" "$((n + 1))" "$max_nudges"
+          continue
+        fi
+        text=$(nudge_text "$addr" "$mins" "$((n + 1))")
+        if timeout "$((call_timeout * 4))" hc send "$addr" "$text" >/dev/null; then
+          "${hcc[@]}" label "$addr" "watch.nudges=$((n + 1))" >/dev/null
+          printf 'practice-watch: %s: nudged (idle %s min, nudge %s of %s)\n' "$addr" "$mins" "$((n + 1))" "$max_nudges"
+        else
+          printf 'practice-watch: %s: the nudge was not sent; the next pass tries again\n' "$addr" >&2
+        fi
+        ;;
+      alert-*)
+        # Once for each state: the key holds the state and the time it began.
+        key="${action#alert-}@$(jq -r '.status_ms // .finished_ms // 0' <<<"$info")"
+        if [[ $(jq -r '.labels["watch.alerted"] // ""' <<<"$info") == "$key" ]]; then
+          printf 'practice-watch: %s: %s, already told\n' "$addr" "${action#alert-}"
+        elif ((! apply)); then
+          printf 'practice-watch: %s: would alert: %s\n' "$addr" "${action#alert-}"
+        else
+          alert "$addr ($(jq -r '.cwd // "?"' <<<"$info")): ${action#alert-}"
+          "${hcc[@]}" label "$addr" "watch.alerted=$key" >/dev/null || true
+        fi
+        ;;
+    esac
+  done
+}
+
+cmd=${1-}
+(($# > 0)) && shift
+case $cmd in
+  on)
+    (($# <= 1)) || usage
+    t=$(terminal "${1-}")
+    "${hcc[@]}" label "$t" watch=on watch.nudges=0 watch.alerted= watch.handoff= >/dev/null
+    printf 'practice-watch: watching %s\n' "$t"
+    ;;
+  waits)
+    (($# <= 1)) || usage
+    t=$(terminal "${1-}")
+    "${hcc[@]}" label "$t" watch=waits >/dev/null
+    printf 'practice-watch: %s waits for the operator; no nudges until practice-watch on\n' "$t"
+    ;;
+  off)
+    (($# <= 1)) || usage
+    t=$(terminal "${1-}")
+    "${hcc[@]}" label "$t" watch= watch.nudges= watch.alerted= watch.handoff= >/dev/null
+    printf 'practice-watch: no longer watching %s\n' "$t"
+    ;;
+  status)
+    (($# == 0)) || usage
+    for v in on waits; do
+      "${hcc[@]}" ls --all --label "watch=$v" --json | jq -r --arg v "$v" '.terminals[] | "\(.address)\twatch=\($v)\t\(.state)\t\(.status // "")\t\(.cwd // "")"'
+    done
+    ;;
+  handover)
+    apply=0 args=()
+    for a in "$@"; do
+      if [[ $a == --apply ]]; then apply=1; else args+=("$a"); fi
+    done
+    ((${#args[@]} >= 1 && ${#args[@]} <= 2)) || usage
+    handover "${args[0]}" "$(terminal "${args[1]-}")" "$apply"
+    ;;
+  pass)
+    apply=0
+    case ${1-} in
+      "") ;;
+      --apply) apply=1 ;;
+      *) usage ;;
+    esac
+    (($# <= 1)) || usage
+    lock="${XDG_RUNTIME_DIR:-/tmp}/practice-watch.lock"
+    exec 9>"$lock"
+    flock -n 9 || {
+      printf 'practice-watch: another pass holds %s\n' "$lock"
+      exit 0
+    }
+    pass "$apply"
+    ((apply)) || printf 'practice-watch: dry run; to apply: practice-watch pass --apply\n'
+    ;;
+  *) usage ;;
+esac

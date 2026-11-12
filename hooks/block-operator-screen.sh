@@ -1,8 +1,8 @@
 #!/bin/bash
 # A Claude Code PreToolUse gate for Bash and the claude-in-chrome tools. It keeps a worker's browser off the
 # operator's screen (issue #69). The working rules say never to open a window on the operator's screen: a worker
-# runs a GUI program on its own hidden display. This gate acts only when HERDR_WORKER=1, which the one who starts a worker sets,
-# so the operator's own sessions are not touched.
+# runs a GUI program on its own hidden display. This gate acts only in a worker, an hc terminal started from a
+# template or by a parent, so the operator's own sessions are not touched.
 # For a worker it refuses:
 #  - a command that opens a URL or file in the operator's browser: xdg-open, gio open, sensible-browser,
 #    x-www-browser, gnome-open, open, python -m webbrowser;
@@ -22,7 +22,12 @@ on_exit() {
 }
 trap on_exit EXIT
 
-[[ ${HERDR_WORKER:-} == 1 ]] || exit 0
+# A worker is an hc terminal that a template or a parent started (`hc run`); the operator's own session has
+# neither. Outside an hc terminal nothing is a worker. If hc cannot answer, the call is refused.
+[[ -n ${HC_TERMINAL_ID-} ]] || exit 0
+command -v jq >/dev/null || exit 1
+me=$(hc get "$HC_TERMINAL_ID" --json 2>/dev/null) || exit 1
+jq -e '.template != null or .parent != null' <<<"$me" >/dev/null || exit 0
 
 refuse() {
   local what=${2//[$'\n\r\t']/ }

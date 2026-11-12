@@ -1,5 +1,5 @@
 ---
-title: Komputa agent practice
+title: Komputa Practice
 description: How Komputa builds software with coding agents, the evidence behind each rule, and the parts that make it work.
 ---
 
@@ -7,27 +7,14 @@ This practice builds software with coding agents. The default is one Claude Code
 
 This site is built from the files in the repo. It never holds a second copy of a rule.
 
-![A funnel of five layers that catch mistakes: codebase, static analysis, verification, prose and human review, with an arrow that moves each lesson up.](/figures/quality-funnel.png)
+<img class="figure-light" src="/figures/quality-funnel.png" alt="A funnel of five layers that catch mistakes: codebase, static analysis, verification, prose and human review, with an arrow that moves each lesson up.">
+<img class="figure-dark" src="/figures/quality-funnel-dark.png" alt="A funnel of five layers that catch mistakes: codebase, static analysis, verification, prose and human review, with an arrow that moves each lesson up.">
 
-## The parts
+## Where to start
 
-In one session, the session is the lead and the owner, and the verifier is one subagent. The table is the form with workers.
-
-| Part | What it is | Where to read more |
-|---|---|---|
-| Lead | Your own Claude Code session. It plans the work, writes one brief for each pull request, starts the owners and reads their reports. | [The life of a program](/explanation/life-of-a-program) |
-| Owner | An `hc` worker in its own pane and git worktree. It builds one pull request and drives CI to green. | [The life of a program](/explanation/life-of-a-program) |
-| Verifier | A short subagent that tries to break the owner's change on the real artifact. | [The life of a program](/explanation/life-of-a-program) |
-| Trail | A `show-me-your-work` TSV file for each owner. It records each decision with its reason. | [The rules](/reference/rules) |
-| herdr skill | The rules for how a lead starts, shows, steers and ends workers. | [The life of a program](/explanation/life-of-a-program) |
-| Templates | The role files for `owner`, `implementer`, `fixer` and `reviewer`. | [Model selection](/explanation/model-selection) |
-| Hooks | Gates that refuse a command that must never run. | [Hooks reference](/reference/scripts) |
-| Rules | The working rules, and the check that holds each one. | [The rules](/reference/rules) |
-
-## Read in this order
-
-1. [The quality funnel](/explanation/quality-funnel): the idea that the rest follows from.
-2. [Framework evidence](/explanation/framework-evidence): what the practice caught, what it cost, and what is not proved yet.
-3. [The life of a program](/explanation/life-of-a-program): one program from plan to retirement.
-4. [Model selection](/explanation/model-selection) and [Context economics](/explanation/context-economics): why the sizes and models are what they are.
-5. [The rules](/reference/rules) and the [Hooks reference](/reference/scripts): look things up.
+| You are | Read |
+|---|---|
+| New to the practice | [Introduction](/start), then the [Quickstart](/start/quickstart) |
+| Deciding whether to adopt it | [Introduction](/start), then [Framework evidence](/explanation/framework-evidence) |
+| Changing a rule, a hook or the template | [How it fits](/explanation/how-it-fits), [The rules](/reference/rules) and the [Hooks](/reference/hooks) |
+| An agent | [The rules](/reference/rules) and the [Hooks](/reference/hooks), or search these docs through `/mcp` |

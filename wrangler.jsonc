@@ -1,0 +1,11 @@
+// The Cloudflare Worker that serves the docs site. Blume reads this file when
+// DOCS_TARGET=cloudflare and writes the full config to dist/server/wrangler.json.
+{
+  "name": "komputa-practice-docs",
+  "compatibility_date": "2026-11-01",
+  "routes": [{ "pattern": "docs.komputa.io", "custom_domain": true }],
+  // No *.workers.dev address and no preview links: the site has one address,
+  // docs.komputa.io, and answers nowhere else. CI checks both.
+  "workers_dev": false,
+  "preview_urls": false
+}

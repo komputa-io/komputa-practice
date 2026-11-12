@@ -29,13 +29,15 @@ delete that step by hand and drop `PATH="$PWD/.git/bin:$PATH"` from its export
 line. `scripts/update-deps.sh` opens the PR through `scripts/forge/<forge>.sh`.
 
 The `forge` answer (`onedev` or `github`, from the environment file) picks the
-CI file, the PR template and the forge script. Only OneDev gets a CI file
-today: a GitHub repo adds its own workflow.
+CI file (`.onedev-buildspec.yml` or `.github/workflows/gate.yml`), the PR
+template and the forge script. The weekly dependency refresh job is OneDev's
+only: a GitHub repo runs `scripts/update-deps.sh` by hand.
 
 ## What it writes
 
 Seeded once, then the repo's own: `CLAUDE.md`, `CONTEXT.md`, `README.md`,
-`docs/adr/README.md`, `.gitignore`, `.onedev-buildspec.yml`, `global.json`,
+`docs/adr/README.md`, `.gitignore`, `.onedev-buildspec.yml`,
+`.github/workflows/gate.yml`, `global.json`,
 `Directory.Packages.props`, `.config/dotnet-tools.json`, `tsconfig.json`,
 `next.config.ts`, `pyproject.toml`, `.secrets.baseline`.
 
@@ -50,8 +52,8 @@ the forge script (`scripts/forge/<forge>.sh`), the PR template
 `.github/pull_request_template.md`),
 `.editorconfig`, `.shellcheckrc`, and each language's lint and build config.
 
-The coding rules themselves live in the house skills in agent-skills. This
-template only wires a repo to them.
+The coding rules themselves live in the house skills in `skills/` of this
+repo. This template only wires a repo to them.
 
 ## One gate, and the repo's own checks
 

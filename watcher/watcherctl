@@ -1,0 +1,121 @@
+#!/usr/bin/env bash
+# Installs, removes, switches on and off the practice's one watcher (watcher/practice-watch) as a systemd user timer.
+#   watcherctl install [--apply]     write practice-watch.service and .timer into ~/.config/systemd/user
+#   watcherctl uninstall [--apply]   switch the timer off and remove both units
+#   watcherctl enable                start the timer now and at each login: a pass every 5 minutes
+#   watcherctl disable               stop the timer; a running pass finishes
+#   watcherctl status                the timer's state, its last passes, and the watched terminals
+# install and uninstall are dry runs without --apply: they print what they would change and the command to apply.
+# The service runs this checkout's practice-watch, so a pull changes the watcher with no reinstall. Its settings
+# (WATCH_QUIET_MIN, WATCH_MAX_NUDGES, WATCH_ALERT_CMD) go in ~/.config/practice-watch.env, which is optional.
+# Exit codes: 0 done; 1 an error; 2 misuse.
+set -Eeuo pipefail
+shopt -s inherit_errexit
+trap 'printf "%s: line %d: %s exited %d\n" "${0##*/}" "$LINENO" "$BASH_COMMAND" "$?" >&2' ERR
+die() {
+  printf 'watcherctl: %s\n' "$1" >&2
+  exit "${2:-1}"
+}
+usage() {
+  printf 'usage: watcherctl install [--apply] | uninstall [--apply] | enable | disable | status\n' >&2
+  exit 2
+}
+
+here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+units=${WATCHER_UNIT_DIR:-$HOME/.config/systemd/user}
+command -v systemctl >/dev/null || die "systemctl is missing: the watcher runs as a systemd user timer"
+
+service_text() {
+  cat <<EOF
+# Written by $here/watcherctl install. Remove with: watcherctl uninstall --apply
+[Unit]
+Description=practice-watch: one pass over the watched agent sessions
+
+[Service]
+Type=oneshot
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+EnvironmentFile=-%h/.config/practice-watch.env
+ExecStart=$here/practice-watch pass --apply
+TimeoutStartSec=15min
+EOF
+}
+
+timer_text() {
+  cat <<EOF
+# Written by $here/watcherctl install. Remove with: watcherctl uninstall --apply
+[Unit]
+Description=practice-watch every 5 minutes
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=5min
+
+[Install]
+WantedBy=timers.target
+EOF
+}
+
+apply_flag() { # apply_flag ARGS...: 1 for --apply, 0 for none
+  case ${1-} in
+    "") printf 0 ;;
+    --apply) printf 1 ;;
+    *) usage ;;
+  esac
+}
+
+cmd=${1-}
+(($# > 0)) && shift
+case $cmd in
+  install)
+    (($# <= 1)) || usage
+    apply=$(apply_flag "${1-}")
+    if ((! apply)); then
+      printf 'watcherctl: would write %s/practice-watch.service (runs %s/practice-watch pass --apply)\n' "$units" "$here"
+      printf 'watcherctl: would write %s/practice-watch.timer (every 5 minutes)\n' "$units"
+      printf 'watcherctl: dry run; to apply: %s/watcherctl install --apply, then watcherctl enable\n' "$here"
+      exit 0
+    fi
+    mkdir -p "$units"
+    service_text >"$units/practice-watch.service"
+    timer_text >"$units/practice-watch.timer"
+    systemctl --user daemon-reload
+    printf 'watcherctl: installed in %s; switch it on with: watcherctl enable\n' "$units"
+    ;;
+  uninstall)
+    (($# <= 1)) || usage
+    apply=$(apply_flag "${1-}")
+    found=()
+    for f in "$units"/practice-watch.{service,timer}; do [[ -e $f ]] && found+=("$f"); done
+    ((${#found[@]})) || {
+      printf 'watcherctl: not installed in %s; nothing to do\n' "$units"
+      exit 0
+    }
+    if ((! apply)); then
+      printf 'watcherctl: would stop practice-watch.timer and remove %s\n' "${found[*]}"
+      printf 'watcherctl: dry run; to apply: %s/watcherctl uninstall --apply\n' "$here"
+      exit 0
+    fi
+    systemctl --user disable --now practice-watch.timer 2>/dev/null || true
+    rm -f -- "${found[@]}"
+    systemctl --user daemon-reload
+    printf 'watcherctl: removed %s\n' "${found[*]}"
+    ;;
+  enable)
+    (($# == 0)) || usage
+    [[ -e $units/practice-watch.timer ]] || die "not installed; run: watcherctl install --apply"
+    systemctl --user enable --now practice-watch.timer
+    printf 'watcherctl: on; a pass runs every 5 minutes. Watch a session with: practice-watch on\n'
+    ;;
+  disable)
+    (($# == 0)) || usage
+    systemctl --user disable --now practice-watch.timer
+    printf 'watcherctl: off\n'
+    ;;
+  status)
+    (($# == 0)) || usage
+    systemctl --user list-timers --all --no-pager practice-watch.timer || true
+    journalctl --user -u practice-watch.service -n 10 --no-pager -o cat 2>/dev/null || true
+    "$here/practice-watch" status
+    ;;
+  *) usage ;;
+esac

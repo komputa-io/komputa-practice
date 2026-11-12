@@ -14,3 +14,23 @@
     overflow-wrap: anywhere;
   }
 }
+
+/* The Komputa brand v1 colours (style-guide/tokens.json). The accent,
+   background and fonts are set in blume.config.ts. */
+:root {
+  --blume-foreground: #111111;
+  --blume-muted-foreground: #5e5e5a;
+  --blume-border: #dddbd5;
+}
+:root[data-theme="dark"] {
+  --blume-foreground: #f4f3ef;
+  --blume-muted-foreground: #a3a39e;
+  --blume-border: #2e2e2c;
+}
+
+/* A diagram has a light and a dark PNG (scripts/docs-figures.py); show the one
+   that matches the theme. */
+:root[data-theme="dark"] .figure-light,
+:root:not([data-theme="dark"]) .figure-dark {
+  display: none;
+}

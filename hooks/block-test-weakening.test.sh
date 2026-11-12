@@ -6,7 +6,18 @@ DIR=$(cd "$(dirname "$0")" && pwd)
 HOOK=${1:-$DIR/block-test-weakening.sh}
 FAIL=0 RUN=0
 T=$(mktemp -d)
-trap 'rm -rf -- "$T"' EXIT
+STUB=$(mktemp -d)
+trap 'rm -rf -- "$T" "$STUB"' EXIT
+printf '#!/bin/bash\n[[ $1 == get && -n ${STUB_HC-} ]] || exit 1\nprintf "%%s" "$STUB_HC"\n' >"$STUB/hc"
+chmod +x "$STUB/hc"
+# terminal <worker: 1|0> [prune label]: what hc get says about the hook's own terminal.
+terminal() {
+  if [[ $1 == 1 ]]; then
+    jq -nc --arg p "${2-}" '{parent: "t1", template: "owner", labels: (if $p == "" then {} else {"test-prune": $p} end)}'
+  else
+    jq -nc '{parent: null, template: null, labels: {}}'
+  fi
+}
 mkdir -p "$T/tests" "$T/src"
 printf 'def test_a():\n    assert 1 == 1\n' >"$T/tests/test_a.py"
 printf 'print(1)\n' >"$T/src/app.py"
@@ -23,7 +34,9 @@ mkdir "$T/.git"
 check() {
   local got err
   RUN=$((RUN + 1))
-  err=$(printf '%s' "$4" | HERDR_WORKER=$2 HERDR_TEST_PRUNE=$3 "$HOOK" 2>&1 >/dev/null)
+  local prune=$3
+  [[ $prune == 0 ]] && prune=""
+  err=$(printf '%s' "$4" | HC_TERMINAL_ID=t9 STUB_HC="$(terminal "$2" "$prune")" PATH="$STUB:$PATH" "$HOOK" 2>&1 >/dev/null)
   got=$?
   if [[ $got != "$1" ]]; then
     echo "FAIL want $1 got $got: ${4:0:200}"
@@ -117,6 +130,13 @@ check 2 1 0 "$(bash_pl 'rm tests/test_a.py')"
 # Only the exact value 1 is the escape.
 check 2 1 yes "$(bash_pl 'rm tests/test_a.py')"
 check 2 1 0 "$(bash_pl 'HERDR_TEST_PRUNE=1 rm tests/test_a.py')"
+# Only the terminal's label is the escape: an inherited HERDR_TEST_PRUNE=1 is not.
+RUN=$((RUN + 1))
+bash_pl 'rm tests/test_a.py' | HERDR_TEST_PRUNE=1 HC_TERMINAL_ID=t9 STUB_HC="$(terminal 1)" PATH="$STUB:$PATH" "$HOOK" 2>/dev/null
+if [[ $? != 2 ]]; then
+  echo "FAIL an inherited HERDR_TEST_PRUNE=1 let a deletion through"
+  FAIL=$((FAIL + 1))
+fi
 
 # Write.
 check 2 1 0 "$(write_pl tests/test_a.py '')"

@@ -7,6 +7,10 @@ import { setTimeout as sleep } from "node:timers/promises";
 const CLIENT = "dist/client";
 const ENTRY = "dist/server/entry.mjs";
 const PAGE = { title: "The life of a program", route: "/explanation/life-of-a-program" };
+// Each tab path in blume.config.ts. Blume serves no page at a tab root by itself.
+const TAB_ROOTS = [...readFileSync("blume.config.ts", "utf8").matchAll(/\{ label: "[^"]+", path: "([^"]+)"/g)].map(
+  (match) => match[1],
+);
 
 if (!existsSync(ENTRY)) {
   console.error(`docs:smoke: ${ENTRY} is missing; run npm run docs:build first`);
@@ -83,10 +87,10 @@ const checks = [
     async () => (await searchDocs(PAGE.title)).some((hit) => hit.route === PAGE.route),
   ],
   [
-    "the tab roots /explanation and /reference return a page, not a 404",
+    `each tab root (${TAB_ROOTS.join(", ")}) returns a page, not a 404`,
     async () => {
-      let allOk = true;
-      for (const route of ["/explanation", "/reference"]) {
+      let allOk = TAB_ROOTS.length > 0;
+      for (const route of TAB_ROOTS) {
         const response = await fetch(`${base}${route}`);
         console.log(`  ${route}: ${response.status}`);
         if (!response.ok) allOk = false;

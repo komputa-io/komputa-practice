@@ -43,6 +43,6 @@
 ## Tool versions
 
 - **shellcheck and shfmt come through the repo**: dev dependencies in a lock
-  file (as agent-skills' `scripts/gate.local.sh` does through `uv.lock`), refreshed by the
+  file (a repo's `scripts/gate.local.sh` can run them from `uv.lock`), refreshed by the
   weekly job, or `uvx --exclude-newer "7 days"`. The workstation and CI then run
   the same versions, and nobody bumps them by hand.

@@ -64,7 +64,7 @@ add a check, add its row. When a mistake can no longer happen, drop its rule.
 |---|---|
 | A forced push uses a pinned lease | `hooks/block-dangerous-git.sh` refuses others |
 | No delete that cannot be undone | `hooks/block-destructive-delete.sh` refuses it |
-| No private item in this public repo | `scripts/scrub-check.sh`, in the git hooks and CI |
+| No private item in this shareable repo | `scripts/scrub-check.sh`, in the git hooks and CI |
 | Every check runs on every pull request | `scripts/check.sh`, in CI |
 
 ## Rules
