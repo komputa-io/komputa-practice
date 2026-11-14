@@ -1744,7 +1744,7 @@ STUB_ODEV_CURL = r"""#!/usr/bin/env bash
 url=${*: -1}
 case "$url" in
   */pulls/9/comments) echo "$COMMENTS" ;;
-  */~api/pulls) echo '[{"id": 9}]' ;;
+  */~api/pulls) [[ "$*" == *'"Target Project" is'* ]] && echo '[{"id": 9}]' || exit 22 ;;
   */users/me) echo '{"id": 3}' ;;
   *) echo "curl $*" >>"$STUB_LOG"; cat >>"$STUB_LOG" ;;
 esac
@@ -1863,6 +1863,7 @@ case "$url" in
   *) if [[ "$*" == *" -G "* ]]; then echo "$GH_LIST"; else
        body=$(cat)
        if [[ -n "${NO_TRIAGE:-}" && "$body" == *Triage* ]]; then exit 22; fi
+       if [[ -n "${NO_TRACKING:-}" && "$body" == *'"Type"'* ]]; then exit 22; fi
        printf 'curl %s\\n%s\\n' "$*" "$body" >>"$STUB_LOG"
      fi ;;
 esac
@@ -1959,7 +1960,10 @@ def test_on_onedev_issues_carry_the_triage_field_and_close_with_a_comment(tmp_pa
     assert '"fields": {' in log and '"Triage": "needs-triage"' in log and '"projectId": 7' in log
     assert "/~api/issues/31/state-transitions" in log and '"comment": "Gone in abcdef1."' in log
     assert "/~api/issues/31/description" not in log and "/~api/issues/" in log
-    assert log.count('"Triage"') == 1  # the standing issue is created without it
+    assert (
+        log.count('"Triage"') == 2
+    )  # the cluster issue, and the standing one with Type: tracking too
+    assert '"Type": "tracking"' in log and log.count('"Type"') == 1
 
 
 def test_on_onedev_a_project_without_the_triage_field_still_gets_its_issues(tmp_path, monkeypatch):
@@ -1968,6 +1972,16 @@ def test_on_onedev_a_project_without_the_triage_field_still_gets_its_issues(tmp_
         tmp_path, [_cl("new1", 5), _cl("old", 1)], prev={"old": "identical"}, forge="onedev"
     )
     assert "Duplicate code at new1.py:1" in log and '"Triage"' not in log
+
+
+def test_on_onedev_a_refused_tracking_value_still_records_the_baseline_and_files_with_triage(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("NO_TRACKING", "1")
+    log, state = _nightly(tmp_path, [_cl("c1", 5)], forge="onedev")
+    assert state["clusters"] == {"c1": "nearly_identical"}
+    assert '"title": "Deslop nightly"' in log and '"Triage": "needs-triage"' in log
+    assert '"Type"' not in log
 
 
 def test_the_full_scan_has_no_diff_and_asks_for_embeddings_only_when_given_an_address(tmp_path):

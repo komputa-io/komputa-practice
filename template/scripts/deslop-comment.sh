@@ -79,7 +79,7 @@ else
     shift
     curl -fsS --max-time 30 -H @<(printf 'Authorization: Bearer %s\n' "$ODEV_TOKEN") "$@" "${ODEV_HOST%/}/~api/$path"
   }
-  pid=$(api pulls -G --data-urlencode "query=\"Project\" is \"$ODEV_PROJECT\" and \"Number\" is \"$pr\"" \
+  pid=$(api pulls -G --data-urlencode "query=\"Target Project\" is \"$ODEV_PROJECT\" and \"Number\" is \"$pr\"" \
     --data-urlencode offset=0 --data-urlencode count=1 | jq -r '.[0].id // empty')
   [[ -n "$pid" ]] || die "OneDev has no pull request $pr in $ODEV_PROJECT"
   find_comment() {

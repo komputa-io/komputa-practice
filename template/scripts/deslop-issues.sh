@@ -10,8 +10,9 @@
 #   - comments "Gone in SHA" on the issue of a cluster that has gone, and closes it;
 #   - edits the standing "Deslop nightly" issue (creates it once, labelled `tracking`, so
 #     Sitrep Live keeps it off its Work board). The `tracking` label must exist: on GitHub
-#     create it in the repo; on OneDev the issue gets the field value Type: tracking, so add
-#     that value to the Type field (without it the issue is filed with no label).
+#     create it in the repo; on OneDev the issue gets Type: tracking and Triage: needs-triage,
+#     so add that value to the Type field (without it the issue is filed with Triage only,
+#     with a WARNING).
 # A cluster over the night's cap is baselined and never filed later; so is every
 # cluster of a first run, and of the first run after embeddings are turned on.
 # Reports only identical and nearly identical clusters, and same_behavior ones of
@@ -159,11 +160,17 @@ else
     local pid fields
     pid=$(api "projects/ids/$ODEV_PROJECT")
     fields=$(jq -nc --arg l "$LABEL" '{Triage: $l}')
-    [[ "${3:-}" != plain ]] || fields=$(jq -nc --arg l "$TRACKING" '{Type: $l}')
-    # A project without that field (or value) refuses it: file without it and say so.
+    # The standing issue also gets Type: tracking; the board's tracking rule wins over Triage.
+    # A project whose Type field has no such value refuses it: file with Triage only and say so.
+    if [[ "${3:-}" == plain ]]; then
+      # shellcheck disable=SC2310 # the failure is handled here, on purpose
+      post_issue "$1" "$2" "$(jq -nc --arg l "$LABEL" --arg t "$TRACKING" '{Triage: $l, Type: $t}')" "$pid" 2>/dev/null && return 0
+      printf 'deslop-issues: WARNING the project has no Type value %s (or refused it); filing with Triage only\n' "$TRACKING" >&2
+    fi
+    # A project without the Triage field (or value) refuses it: file without it and say so.
     # shellcheck disable=SC2310 # the failure is handled here, on purpose
     post_issue "$1" "$2" "$fields" "$pid" 2>/dev/null || {
-      printf 'deslop-issues: WARNING the project has no Triage or Type field, or no such value (or refused it); filing without it\n' >&2
+      printf 'deslop-issues: WARNING the project has no Triage field, or no such value (or refused it); filing without it\n' >&2
       post_issue "$1" "$2" '{}' "$pid"
     }
   }
@@ -174,6 +181,10 @@ else
       | api "issues/$1/state-transitions" -X POST -H 'Content-Type: application/json' --data-binary @- >/dev/null
   }
 fi
+
+# The state is written before any issue call, so a refused issue never loses the baseline.
+mkdir -p "$(dirname "$state")"
+jq .state <<<"$plan" >"$state"
 
 filed=0 closed=0
 marked=$(list_marked)
@@ -201,7 +212,4 @@ fi
 body=$(standing_body "$filed")
 hit=$(find_marked nightly)
 if [[ -n "$hit" ]]; then edit_issue "${hit%%$'\t'*}" "$body"; else create_issue "Deslop nightly" "$body" plain; fi
-# The state moves on only when every call worked, so a failed night is tried again.
-mkdir -p "$(dirname "$state")"
-jq .state <<<"$plan" >"$state"
 printf 'deslop-issues: filed %s, closed %s, standing issue %s\n' "$filed" "$closed" "$([[ -n "$hit" ]] && echo edited || echo created)"
