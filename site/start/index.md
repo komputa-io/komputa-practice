@@ -14,8 +14,6 @@ The practice answers with one rule: catch each mistake at the highest layer that
 <img class="figure-light" src="/figures/quality-funnel.png" alt="A funnel of five layers that catch mistakes: codebase, static analysis, verification, prose and human review, with an arrow that moves each lesson up.">
 <img class="figure-dark" src="/figures/quality-funnel-dark.png" alt="A funnel of five layers that catch mistakes: codebase, static analysis, verification, prose and human review, with an arrow that moves each lesson up.">
 
-The practice changes on evidence. Until 10 November 2026 it ran unattended leads and workers. On one program, 33 of 42 fix pull requests repaired tests and tools, not the product. So the default is now one session that builds and merges one pull request at a time. [Framework evidence](/explanation/framework-evidence) gives the numbers, and says what they do not prove yet.
-
 ## What makes it different
 
 - **One session, one pull request at a time.** The session plans, builds and merges. It sizes the process to the risk of each change, from a docs fix to a security change.
@@ -40,6 +38,6 @@ The practice changes on evidence. Until 10 November 2026 it ran unattended leads
 ## Next steps
 
 - [Quickstart](/start/quickstart): install the practice and make your first change.
-- [Framework evidence](/explanation/framework-evidence): what the practice caught, what it cost, and what is not proved yet.
+- [Changes](/reference/changes): every pull request merged into the practice, by version.
 - [The quality funnel](/explanation/quality-funnel): each layer, and the rule to move a lesson up.
 - [FAQ](/start/faq): short answers to the first questions.

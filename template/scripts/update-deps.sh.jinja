@@ -7,13 +7,14 @@
 #   scripts/update-deps.sh            refresh, commit to a branch, open a PR
 #   scripts/update-deps.sh --dry-run  refresh and show the diff; commit nothing
 #   scripts/update-deps.sh --refresh-only [--only SECTION ...]
-#                                     refresh only, commit nothing. Sections: {{ langs | join(', ') if langs else 'none' }}
+#                                     refresh only, commit nothing. Sections: {{ (langs + ['images']) | join(', ') }}
 #   scripts/update-deps.sh --publish-only
 #                                     commit what a refresh left and open a PR
 # CI uses the last two when no one image holds every toolchain.
 # Never crosses a major version: the ranges cap it, and a new major becomes an
 # issue for a person to read the changelog. Only versions at least seven days
-# old are taken. Managed by project-standards.
+# old are taken; that holds for container image digests too. Managed by
+# project-standards.
 set -Eeuo pipefail
 shopt -s inherit_errexit
 trap 'printf "%s: line %d: %s exited %d\n" "${0##*/}" "$LINENO" "$BASH_COMMAND" "$?" >&2' ERR
@@ -24,7 +25,7 @@ die() {
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$root"
-sections=({{ langs | join(' ') }})
+sections=({{ (langs + ['images']) | join(' ') }})
 usage() {
   printf 'usage: scripts/update-deps.sh [--dry-run | --refresh-only [--only SECTION ...] | --publish-only]\nsections: %s\n' "${sections[*]}" >&2
   exit 2
@@ -49,13 +50,13 @@ done
 # want[SECTION] is set for each section this run includes; no --only means all.
 chosen=${only[*]}
 [[ -n "$chosen" ]] || only=("${sections[@]}")
-{% if langs %}declare -A want=()
-{% endif %}for s in "${only[@]}"; do
+declare -A want=()
+for s in "${only[@]}"; do
   [[ " ${sections[*]} " == *" $s "* ]] || usage
-{%- if langs %}
   want[$s]=1
-{%- endif %}
 done
+# The image section's lines, for the PR text. A separate publish step reads it.
+notes="$(git rev-parse --git-dir)/update-deps-images.txt"
 if [[ "$step" == all ]]; then
   [[ -z "$(git status --porcelain)" ]] || die "the working tree has changes; commit or stash them first"
 fi
@@ -179,6 +180,69 @@ if [[ "$step" != publish ]]; then
     )
   fi
 {%- endif %}
+  # Container images. A reference NAME:TAG@sha256:DIGEST anywhere in a tracked
+  # file (git grep) moves to the digest the tag names now, when that image was
+  # built seven days ago or more. skopeo gives both: the tag's digest and the
+  # created date from the image config. A line that names an image with no
+  # digest (image:, FROM, WithImage, WithImageTag, a ...Builder("...") call) is
+  # printed for a person to pin once, and so is a WithImageSHA256 digest with no
+  # tag beside it. A lookup that fails leaves the reference as it is. A OneDev
+  # buildspec escapes @ as @@ (NAME:TAG@@sha256:DIGEST); the new digest keeps it.
+  if [[ -n "${want[images]-}" ]]; then
+    (
+      : >"$notes"
+      say() {
+        printf 'update-deps: images: %s\n' "$1"
+        printf '%s\n' "$1" >>"$notes"
+      }
+      mapfile -t refs < <(git grep -hoIE '[A-Za-z0-9][A-Za-z0-9._/:-]*:[A-Za-z0-9_][A-Za-z0-9_.-]*@@?sha256:[0-9a-f]{64}' | sort -u || true)
+      if [[ -n "${refs[*]}" ]] && ! command -v skopeo >/dev/null; then
+        say "skopeo is not installed, so no image digest was checked"
+        refs=()
+      fi
+      cutoff=$(date -u -d '7 days ago' +%s)
+      for ref in "${refs[@]}"; do
+        image=${ref%%@*}
+        old=${ref##*@}
+        at=${ref#"$image"}
+        at=${at%"$old"}
+        body=$(timeout 60 skopeo inspect --retry-times 2 "docker://$image" 2>/dev/null) || body=
+        new=
+        created=
+        [[ ! "$body" =~ \"Digest\":[[:space:]]*\"(sha256:[0-9a-f]{64})\" ]] || new=${BASH_REMATCH[1]}
+        [[ ! "$body" =~ \"Created\":[[:space:]]*\"([^\"]+)\" ]] || created=$(date -u -d "${BASH_REMATCH[1]}" +%s 2>/dev/null) || created=
+        if [[ -z "$new" ]]; then
+          say "$image stays at $old: the lookup failed"
+        elif [[ "$new" == "$old" ]]; then
+          continue
+        elif [[ -z "$created" ]] || ((created < 946684800)); then
+          # A reproducible build stamps 1970, so a date before 2000 is no date.
+          say "$image stays at $old: $new has no build date, or one before 2000"
+        elif ((created <= cutoff)); then
+          # Only the digest changes: the match starts where the name does, so
+          # registry/postgres:17 is not touched for postgres:17.
+          git grep -lzF "$ref" | xargs -0 sed -i -E "s#(^|[^A-Za-z0-9._/:-])${ref//./\\.}#\1$image$at$new#g"
+          say "$image moves from $old to $new"
+        else
+          say "$image stays at $old: $new is under seven days old"
+        fi
+      done
+      named='(^[[:space:]-]*image:|^[[:space:]]*FROM[[:space:]]|WithImage(Tag|SHA256)?\(|Builder\(")'
+      yaml_ref="(image:|FROM)[[:space:]]+(--platform=[^[:space:]]+[[:space:]]+)?[\"']?([^[:space:]\"']+:[^[:space:]\"']+)"
+      code_ref='(WithImage|WithImageTag|Builder)\("([^"]+)"'
+      while IFS= read -r hit; do
+        file=${hit%%:*}
+        rest=${hit#*:}
+        where=$file:${rest%%:*}
+        text=${rest#*:}
+        if [[ "$text" == *'WithImageSHA256('* ]]; then
+          say "$where: a digest with no tag beside it, so it is not checked"
+        elif [[ "$text" =~ $yaml_ref || "$text" =~ $code_ref ]]; then
+          say "$where: ${BASH_REMATCH[-1]} is a tag with no digest; a person pins it once"
+        fi
+      done < <(git grep -nIE "$named" | grep -v '@sha256:' || true)
+    )
+  fi
   if [[ "$step" == refresh ]]; then
     printf 'update-deps: refreshed %s; nothing committed\n' "${only[*]}"
     exit 0
@@ -206,5 +270,9 @@ git commit -qam "chore(deps): refresh dependencies within their ranges"
 git push -q -u origin "$branch"
 title='chore(deps): refresh dependencies within their ranges'
 desc=$'## Why\n\nThe weekly refresh: newer versions within the declared ranges, each at least seven days old.\n\n## Test plan\n\n- No new tests. The existing gate is the test of a dependency refresh.\n\n## Verification\n\n- CI runs the full gate on this PR. Merge only when it is green.'
+if [[ -s "$notes" ]]; then
+  desc+=$'\n\n## Image pins\n\n'$(sed 's/^/- /' "$notes")
+fi
 pr=$("$forge" pr-create "$branch" "$title" "$desc")
+rm -f "$notes"
 printf 'update-deps: opened PR %s from %s\n' "$pr" "$branch"

@@ -5,7 +5,7 @@ sidebar:
   order: 4
 ---
 
-Use this guide when a session must keep working while nobody watches it, for example overnight. The watcher nudges the session when it goes idle with work left, asks it for a handoff when its context grows large, and alerts you once when only you can go on. [The watcher](/explanation/the-watcher) explains what one pass does and why it is safe to leave running.
+Use this guide when a session must keep working while nobody watches it, for example overnight. The watcher nudges the session when it goes idle with work left, hands it over to a fresh session when its context grows large, and alerts you once when only you can go on. [The watcher](/explanation/the-watcher) explains what one pass does and why it is safe to leave running.
 
 ## Before you start
 
@@ -20,23 +20,29 @@ Use this guide when a session must keep working while nobody watches it, for exa
    ```sh
    cd ~/Code/komputa-practice
    watcher/watcherctl install            # a dry run: it prints what it would write
-   watcher/watcherctl install --apply    # writes practice-watch.service and .timer
+   watcher/watcherctl install --apply    # writes practice-watch.service and .timer, and turns on linger
    watcher/watcherctl enable             # a pass every 5 minutes, now and after each login
    ```
 
-2. **Put the session on the watch.** Run this from inside the session's own `hc` terminal, or name the terminal:
+2. **Put the session on the watch.** This also marks it the lead (`lead=1`). Run it from inside the session's own `hc` terminal, or name the terminal:
 
    ```sh
    ~/Code/komputa-practice/watcher/practice-watch on       # or: ... on t7
    ~/Code/komputa-practice/watcher/practice-watch status   # what is watched
    ```
 
-3. **Leave it.** Each pass reads every terminal labelled `watch=on`. A session that has gone idle with work left gets one nudge. A session that is blocked, out of nudges or ended raises one alert.
+3. **Leave it.** Each pass reads every terminal labelled `watch=on`. A session that has gone idle with work left gets one nudge. A session that is blocked, out of nudges or ended raises one alert. When a session's context passes 250k tokens, it writes a handoff and starts a fresh session from it, in the same tab. The fresh session takes over the watch and the `lead=1` label. The old session comes off the watch, and the watcher closes it after 3 idle hours. What it last said stays in its transcript.
 
-4. **In the morning, take it off the watch:**
+4. **In the morning, find the lead and ask it what happened.** After a night of handovers, the lead is often not the session you started:
 
    ```sh
-   ~/Code/komputa-practice/watcher/practice-watch off
+   hc ls --label lead=1    # the current lead
+   ```
+
+   Ask that session what ran overnight and what waits on you. Then take it off the watch:
+
+   ```sh
+   ~/Code/komputa-practice/watcher/practice-watch off <lead terminal>
    ```
 
 ## Check it worked

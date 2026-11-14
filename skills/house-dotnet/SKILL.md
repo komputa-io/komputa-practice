@@ -32,7 +32,7 @@ left side, write the right side:
 | Services, repositories, `I*ReadStore`, `I*WriteStore` | A slice handler on the DbContext. |
 | Entities as public positional records changed with `with` | Private state and methods that return `ErrorOr<Success>`, for an entity with rules. |
 | `Update()` on an untracked entity | `AsTracking()`. |
-| EF InMemory, `postgres:latest` | Testcontainers with the production image and a template database. |
+| EF InMemory, `postgres:latest`, a container per test class | Testcontainers with the production image, one container per test run, and a database per fixture from a template. |
 | xUnit, `IAsyncLifetime`, FluentAssertions, Moq, NSubstitute, Verify.Xunit | TUnit (`IAsyncInitializer`, `[ClassDataSource<T>(Shared = SharedType.PerTestSession)]`), `await Assert.That`, hand fakes, Verify.TUnit. |
 | `ValidateDataAnnotations()` alone | A generated `[OptionsValidator]` plus `ValidateOnStart()`. |
 | `Version="*"`, "add the latest stable", a global `dotnet-outdated --upgrade` | The version rules in [build.md](references/build.md). |

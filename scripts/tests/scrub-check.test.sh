@@ -270,6 +270,11 @@ mkdir -p "$repo/packages/x"
 hash_with zanzibarco >"$repo/packages/x/package-lock.json"
 run "$repo"
 expect "integrity exemption holds only for the root package-lock.json" 1
+newrepo
+mkdir -p "$repo/app"
+hash_with zanzibarco >"$repo/app/package-lock.json"
+run "$repo"
+expect "integrity exemption holds for app/package-lock.json" 0
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 ((fail == 0))

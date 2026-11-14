@@ -15,6 +15,6 @@ This site is built from the files in the repo. It never holds a second copy of a
 | You are | Read |
 |---|---|
 | New to the practice | [Introduction](/start), then the [Quickstart](/start/quickstart) |
-| Deciding whether to adopt it | [Introduction](/start), then [Framework evidence](/explanation/framework-evidence) |
+| Deciding whether to adopt it | [Introduction](/start), then the [FAQ](/start/faq) |
 | Changing a rule, a hook or the template | [How it fits](/explanation/how-it-fits), [The rules](/reference/rules) and the [Hooks](/reference/hooks) |
 | An agent | [The rules](/reference/rules) and the [Hooks](/reference/hooks), or search these docs through `/mcp` |

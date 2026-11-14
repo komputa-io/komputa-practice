@@ -803,6 +803,7 @@ def test_ci_runs_each_language_in_its_own_image_when_there_are_several(tmp_path)
         "Refresh Python",
         "Refresh .NET",
         "Refresh TypeScript",
+        "Refresh image pins",
         "Open a PR",
     ]
 

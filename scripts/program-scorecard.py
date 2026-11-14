@@ -4,19 +4,23 @@
     scripts/program-scorecard.py [--repo DIR] [--branch REF] [--since DATE] [--until DATE]
                                  [--kind NAME=REGEX]... [--src PREFIX]... [--skip REGEX]
 
-A pull request is a first-parent merge commit on the branch whose subject names it: "Merges PR #7 from fix-3"
-(OneDev) or "Merge pull request #7 from owner/fix-3" (GitHub). The branch name gives the kind. The default kinds
-are build (pr-<n>), fix (fix...) and prune (prune...); each other branch is "other". Lines are split by path:
+A pull request is a first-parent commit on the branch that names it: a merge commit "Merges PR #7 from fix-3"
+(OneDev) or "Merge pull request #7 from owner/fix-3" (GitHub), whose branch name gives the kind, or a squash
+commit "fix(verify): keep the pid (#7)", whose conventional-commit type gives the kind. The default kinds are
+build (pr-<n> or feat...), fix (fix...) and prune (prune...); each other name is "other". Lines are split by path:
 test (tests/, /tests/, .test.), source (under --src, default src/) and other. A path that matches --skip is left
 out (default: migrations, lock files and an `archive/` folder).
 
 It also prints the measures of "What success is" (`rules/working-rules.md`): pull requests merged for each day,
 the median hours from the first commit of a pull request to its merge, fix pull requests as a share of all, and
-the count of test functions in the tree before the first merge and at the last one.
+the count of test functions in the tree before the first merge and at the last one. A squash merge keeps no
+branch commits, so the lead time counts merge commits only.
+
+Each reading names the practice version it was made with: `_commit:` in the repo's `.copier-answers.yml` at each
+pull request, so readings from different repos and versions can be compared.
 
 Use it to compare two periods of one repo, for example a period with workers and a period in one session.
-`docs/framework-evidence.md` holds the first reading. Exit codes: 0 printed, 1 no pull request found, 2 wrong
-arguments or not a git repo.
+Exit codes: 0 printed, 1 no pull request found, 2 wrong arguments or not a git repo.
 """
 
 import argparse
@@ -28,7 +32,10 @@ import sys
 TEST_FUNCTION = r"^\s*(async\s+)?def test_|^\s*\[(Test|Fact|Theory|TestMethod)\b|^\s*(it|test)\("
 # OneDev names the branch whole ("fix/3-name"); GitHub puts the owner before it ("owner/fix-3").
 SUBJECT = re.compile(r"Merges PR #(\d+) from (\S+)|Merge pull request #(\d+) from [^/\s]+/(\S+)")
-KINDS = ["build=^pr-\\d", "fix=^fix", "prune=^prune"]
+SQUASH = re.compile(r"\(#(\d+)\)$")
+# A squash merge keeps no branch name: "feat(today): …" gives "feat".
+TYPE = re.compile(r"^([a-z]+)(\([^)]*\))?!?:")
+KINDS = ["build=^pr-\\d|^feat", "fix=^fix", "prune=^prune"]
 
 
 def git(repo, *args):
@@ -53,6 +60,16 @@ def lead_hours(repo, commit, merged):
     """Hours from the first commit of a pull request's branch to its merge."""
     stamps = git(repo, "log", "--format=%at", f"{commit}^1..{commit}^2")
     return (merged - min(int(s) for s in stamps)) / 3600 if stamps else 0.0
+
+
+def version_at(repo, commit):
+    """The practice version a repo was on at one commit: `_commit:` in its .copier-answers.yml, or None."""
+    done = subprocess.run(
+        ["git", "-C", repo, "show", f"{commit}:.copier-answers.yml"],
+        capture_output=True, text=True, check=False,
+    )  # fmt: skip
+    found = re.search(r"^_commit:\s*(\S+)", done.stdout, re.MULTILINE)
+    return found[1] if found else None
 
 
 def lines_of(repo, commit, src, skip):
@@ -89,15 +106,21 @@ def main():
 
     rows = []
     commits = []
+    versions = []
     for line in git(
-        args.repo, "log", "--first-parent", "--merges", "--format=%H %at %s", *window, args.branch
+        args.repo, "log", "--first-parent", "--format=%H%x1f%at%x1f%P%x1f%s", *window, args.branch
     ):
-        commit, when, subject = line.split(" ", 2)
-        named = SUBJECT.search(subject)
-        if not named:
+        commit, when, parents, subject = line.split("\x1f", 3)
+        merge = len(parents.split()) > 1
+        named = SUBJECT.search(subject) if merge else None
+        if named:
+            label = named[2] or named[4]
+        elif not merge and SQUASH.search(subject):
+            typed = TYPE.match(subject)
+            label = typed[1] if typed else ""
+        else:
             continue
-        branch = named[2] or named[4]
-        kind = next((name for name, rx in kinds if rx.search(branch)), "other")
+        kind = next((name for name, rx in kinds if rx.search(label)), "other")
         rows.append(
             (
                 kind,
@@ -105,7 +128,8 @@ def main():
                 lines_of(args.repo, commit, args.src or ["src/"], skip),
             )
         )
-        commits.append(commit)
+        commits.append((commit, merge))
+        versions.append(version_at(args.repo, commit))
     if not rows:
         print("program-scorecard: no merged pull request found", file=sys.stderr)
         return 1
@@ -113,6 +137,14 @@ def main():
     times = sorted(when for _, when, _ in rows)
     hours = (times[-1] - times[0]) / 3600
     print(f"{len(rows)} pull requests merged over {hours:.1f} hours")
+    # git log lists the newest first; name the versions oldest first.
+    seen = {v: versions.count(v) for v in reversed(versions) if v}
+    print(
+        "practice version (.copier-answers.yml): "
+        + ", ".join(f"{v} for {n} pull request{'s' if n > 1 else ''}" for v, n in seen.items())
+        if seen
+        else "practice version: not recorded (no .copier-answers.yml)"
+    )
     print(f"{'kind':8} {'PRs':>4} {'source +':>9} {'test +':>8} {'test -':>8} {'other +':>8}")
     for kind in [name for name, _ in kinds] + ["other"]:
         mine = [counts for k, _, counts in rows if k == kind]
@@ -137,16 +169,20 @@ def main():
         print(f"median hours from one {kinds[0][0]} merge to the next: {gaps[len(gaps) // 2]:.1f}")
     days = max(hours / 24, 1.0)
     print(f"pull requests merged for each day: {len(rows) / days:.1f}")
-    leads = sorted(lead_hours(args.repo, c, when) for c, (_, when, _) in zip(commits, rows))
+    leads = sorted(
+        lead_hours(args.repo, c, when) for (c, merge), (_, when, _) in zip(commits, rows) if merge
+    )
     print(
         f"median hours from the first commit of a pull request to its merge: {leads[len(leads) // 2]:.1f}"
+        if leads
+        else "median hours from the first commit of a pull request to its merge: not known (squash merges only)"
     )
     fixes = sum(1 for k, _, _ in rows if k == "fix")
     print(f"fix pull requests as a share of all: {100 * fixes / len(rows):.0f} %")
     # git log lists the newest merge first.
     print(
-        f"test functions in the tree: {tests_at(args.repo, commits[-1] + '^1', skip)} before the first merge,"
-        f" {tests_at(args.repo, commits[0], skip)} at the last"
+        f"test functions in the tree: {tests_at(args.repo, commits[-1][0] + '^1', skip)} before the first merge,"
+        f" {tests_at(args.repo, commits[0][0], skip)} at the last"
     )
     return 0
 

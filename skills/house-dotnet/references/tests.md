@@ -30,6 +30,11 @@ cross-language rules are in `house-architecture`.)
   template database, a copy per test class. SQL Server: Respawn or a snapshot
   between tests. Never EF InMemory: it checks no constraints, transactions or
   SQL. The parameterless builder is obsolete and pins an old image.
+- **Start a test container once per test run, never per class or per test.**
+  Isolate tests inside it with a database or schema each (`CREATE DATABASE`, or
+  a template clone). Mutation and gate tools rerun the whole suite many times,
+  so a per-class container multiplies: one suite with 47 per-class fixtures
+  made about 32,000 containers in a day.
 - **Fake an HTTP upstream with an `HttpMessageHandler` that records each
   request**, passed to `ConfigurePrimaryHttpMessageHandler`. Other doubles are
   hand-written sealed fakes. No mocking library.

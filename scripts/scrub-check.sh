@@ -109,11 +109,11 @@ content .scrub-binary-ok | sed -e 's/\r$//' -e '/^#/d' -e '/^$/d' >"$binary_ok"
 
 # A lock file's integrity hash is base64 text. A short denylist item can
 # occur inside it by chance, and a hash holds no private item, so a denylist
-# hit on such a line in the root package-lock.json is dropped. The line must
+# hit on such a line in the root package-lock.json, or app/package-lock.json, is dropped. The line must
 # have the real shape: sha512- plus 88 base64 characters (86 and "=="). The
 # patterns still run.
 drop_integrity() {
-  if [[ $1 == package-lock.json ]]; then
+  if [[ $1 == package-lock.json || $1 == app/package-lock.json ]]; then
     grep -v -E '^[0-9]+: *"integrity": "sha512-[A-Za-z0-9+/]{86}==",?$' || true
   else
     cat

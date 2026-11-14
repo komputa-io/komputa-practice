@@ -10,6 +10,5 @@ These pages explain the ideas behind the practice. Read them in this order.
 3. [The life of a program](/explanation/life-of-a-program): one program from the plan to the hand over.
 4. [Model selection](/explanation/model-selection): how each worker's model is chosen.
 5. [Context economics](/explanation/context-economics): where the tokens go.
-6. [Framework evidence](/explanation/framework-evidence): what the practice caught, what it cost, and how the next period is measured.
-7. [The watcher](/explanation/the-watcher): how one timer keeps a long session going while nobody watches it.
-8. [The archive](/explanation/archive): what the practice no longer runs, and why.
+6. [The watcher](/explanation/the-watcher): how one timer keeps a long session going while nobody watches it.
+7. [The archive](/explanation/archive): what the practice no longer runs, and why.

@@ -77,6 +77,31 @@ js_syntax() {
   return "$rc"
 }
 
+# The app (Sitrep Live): lint, the protocol copy, types and tests. It needs its dependencies (`npm ci` in app/). mise gives
+# the Node that app/mise.toml pins; CI has that Node already.
+app_checks() {
+  [[ -f app/package.json ]] || return 0
+  [[ -d app/node_modules ]] || {
+    printf 'check: app/node_modules is missing; run npm ci in app/\n' >&2
+    return 1
+  }
+  local run=()
+  command -v mise >/dev/null && run=(mise exec --)
+  local s rc=0
+  for s in lint check:protocol typecheck test; do
+    (cd app && "${run[@]}" npm run --silent "$s") || rc=1
+  done
+  return "$rc"
+}
+
+# The herdr mod (Sitrep Live in the herdr window): its pure logic, with Node's own test runner on the Node that app/ pins.
+herdr_checks() {
+  [[ -f herdr/sitrep-live/logic.test.mjs ]] || return 0
+  local run=()
+  command -v mise >/dev/null && run=(mise exec --)
+  (cd app && "${run[@]}" node --test ../herdr/sitrep-live/logic.test.mjs)
+}
+
 step scrub scripts/scrub-check.sh
 step 'no model names' no_model_names
 step shellcheck tool --from shellcheck-py shellcheck -- "${scripts[@]}"
@@ -87,6 +112,8 @@ step shfmt tool --from shfmt-py shfmt -d -- "${scripts[@]}"
 step 'ruff format' tool ruff format --check .
 step 'ruff check' tool ruff check .
 step 'js syntax' js_syntax
+step app app_checks
+step 'herdr mod' herdr_checks
 step 'skill refs' scripts/check-skill-refs.sh
 step 'shell tests' run_tests
 

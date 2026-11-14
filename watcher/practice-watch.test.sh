@@ -11,8 +11,16 @@ cat >"$T/bin/hc" <<'EOF'
 #!/bin/bash
 printf '%s\n' "$*" >>"$STUB_LOG"
 case $1 in
-  ls) [[ -n ${STUB_LS-} ]] || exit 1; printf '%s' "$STUB_LS" ;;
-  get) printf '%s' "$STUB_GET" ;;
+  ls)
+    [[ -n ${STUB_LS-} ]] || exit 1
+    case $* in
+      *watch.old=1*) printf '%s' "${STUB_LS_OLD:-{\"terminals\":[]\}}" ;;
+      *watch=on*) printf '%s' "$STUB_LS" ;;
+      *) printf '%s' "${STUB_LS_LIVE:-$STUB_LS}" ;;
+    esac
+    ;;
+  get) v="STUB_GET_$2" && printf '%s' "${!v:-$STUB_GET}" ;;
+  kill | rm) exit 0 ;;
   read) printf '%s' "${STUB_READ-}" ;;
   send) exit "${STUB_SEND_RC:-0}" ;;
   label) exit 0 ;;
@@ -20,8 +28,14 @@ case $1 in
 esac
 EOF
 printf '#!/bin/bash\nprintf "%%s\\n" "$*" >>"$STUB_LOG"\n' >"$T/bin/systemctl"
+cat >"$T/bin/loginctl" <<'EOF'
+#!/bin/bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+[[ $1 == show-user ]] && printf '%s' "${STUB_LINGER-}"
+exit 0
+EOF
 printf '#!/bin/bash\nprintf "%%s\\n" "$1" >>"$STUB_ALERTS"\n' >"$T/alert"
-chmod +x "$T/bin/hc" "$T/bin/systemctl" "$T/alert"
+chmod +x "$T/bin/hc" "$T/bin/systemctl" "$T/bin/loginctl" "$T/alert"
 
 ok() { # ok WHAT CONDITION...: count a case; report it when the condition fails
   local what=$1
@@ -44,7 +58,7 @@ get() { jq -nc --arg st "$1" --arg s "$2" --argjson ms "$((now - $3 * 60000))" -
 watch() { # watch ARGS...: run practice-watch with the stubs; output in $T/out
   rm -f "$T/log"
   env PATH="$T/bin:$PATH" STUB_LOG="$T/log" STUB_ALERTS="$T/alerts" STUB_LS="$LS" WATCH_ALERT_CMD="$T/alert" \
-    XDG_RUNTIME_DIR="$T" WATCH_NOW_MS="$now" "$DIR/practice-watch" "$@" >"$T/out" 2>&1
+    XDG_RUNTIME_DIR="$T" WATCH_NOW_MS="$now" WATCH_START_WAIT=0 "$DIR/practice-watch" "$@" >"$T/out" 2>&1
 }
 
 # An idle session past the quiet time gets one nudge, and its count goes up.
@@ -100,31 +114,62 @@ ok "a context under the cap is left alone" not_logged '^send'
 # handover: a fresh session in the old one's folder, space and tab, with its command and the handoff; the old one
 # leaves the watch only once the fresh one has started.
 touch "$T/handoff.md"
-fg=$(jq -nc '{state:"live", cwd:"/shell", foreground:{argv:["claude","--permission-mode","x"], cwd:"/repo"},
+fg=$(jq -nc '{state:"live", cwd:"/shell", foreground:{argv:["claude","--permission-mode","x","Continue the work from the handoff at /old.md. Read it first. This session is on the practice watch."], cwd:"/repo"},
   labels:{watch:"waits", "herdr.space":"sp1", "herdr.tab":"tb1"}}')
 STUB_GET=$fg watch handover "$T/handoff.md" t7
 ok "a handover dry run starts nothing" not_logged '^run'
 STUB_GET=$fg watch handover "$T/handoff.md" t7 --apply
-ok "handover starts the fresh session" logged "^run --json --bg --no-parent --cwd /repo --label watch=on --label herdr.space=sp1 --label herdr.tab=tb1 -- claude --permission-mode x Continue the work from the handoff at $T/handoff.md. Read it first. This session is on the practice watch.$"
-ok "handover takes the old session off the watch" logged '^label t7 watch= watch.nudges= watch.alerted= watch.handoff=$'
+ok "handover starts the fresh session as the lead, with only the new handoff" logged "^run --json --bg --no-parent --cwd /repo --label watch=on --label lead=1 --label herdr.space=sp1 --label herdr.tab=tb1 -- claude --permission-mode x Continue the work from the handoff at $T/handoff.md. Read it first. This session is on the practice watch.$"
+ok "handover takes the old session off the watch and the lead, and marks it old" logged '^label t7 watch= watch.nudges= watch.alerted= watch.handoff= lead= watch.old=1$'
 STUB_RUN_FAIL=1 STUB_GET=$fg watch handover "$T/handoff.md" t7 --apply
 ok "a failed start leaves the old session on the watch" not_logged '^label t7'
 ok "a failed start says so" grep -q 'did not start the fresh session' "$T/out"
+# The old session's own launch prompt and a resume stay behind; its options and their values go with it. A line of the
+# prompt that starts with - broke the 09:03 handover of 13 Nov: claude read it as an unknown option and exited.
+launched=$(jq -nc '{state:"live", foreground:{argv:["claude","--model","sonnet","--permission-mode","bypassPermissions","--resume","abc-123","Plan Sitrep Live as a program.","- The spec (draft 4): x"], cwd:"/repo"}, labels:{}}')
+STUB_GET=$launched STUB_GET_t8='{"state":"live"}' watch handover "$T/handoff.md" t7 --apply
+ok "handover keeps the options and their values, and drops the old prompt and the resume" logged "^run --json --bg --no-parent --cwd /repo --label watch=on --label lead=1 -- claude --model sonnet --permission-mode bypassPermissions Continue the work from the handoff at $T/handoff.md. Read it first. This session is on the practice watch.$"
+STUB_GET=$launched STUB_GET_t8='{"state":"finished","exit_code":1}' STUB_READ="error: unknown option '- The spec'" watch handover "$T/handoff.md" t7 --apply
+ok "a fresh session that dies at start leaves the old session on the watch" not_logged '^label t7'
+ok "a fresh session that dies at start says so, with what it said" grep -q "did not stay up.*t7 stays on the watch" "$T/out"
+ok "the dead start's own words are shown" grep -q "unknown option" "$T/out"
+# An old session (from a handover) closes once it has been idle for WATCH_CLOSE_H hours (default 3), and not while a
+# terminal it started still runs. t7 is the watched lead; t5 is the old one.
+old() { jq -nc --argjson ms "$((now - $1 * 60000))" '{address:"t5", state:"live", status:{state:"done"}, status_ms:$ms, labels:{"watch.old":"1"}}'; }
+OLD='{"terminals":[{"address":"t5"}]}' ALL='{"terminals":[{"address":"t7"},{"address":"t5"}]}'
+STUB_LS_OLD=$OLD STUB_LS_LIVE=$ALL STUB_GET_t5=$(old 200) STUB_GET=$(get live working 1) watch pass --apply
+ok "an old session idle for 3 hours closes" logged '^kill t5$'
+ok "a closed session is removed, which closes its pane" logged '^rm t5$'
+STUB_LS_OLD=$OLD STUB_LS_LIVE=$ALL STUB_GET_t5=$(old 100) STUB_GET=$(get live working 1) watch pass --apply
+ok "an old session idle for less stays open" not_logged '^kill'
+STUB_LS_OLD=$OLD STUB_LS_LIVE=$ALL STUB_GET_t5=$(old 200) STUB_GET=$(get live working 1 | jq -c '.parent="t5"') watch pass --apply
+ok "an old session with a live worker stays open" not_logged '^kill'
+STUB_LS_OLD=$OLD STUB_LS_LIVE=$ALL STUB_GET_t5=$(old 200) STUB_GET=$(get live working 1) watch pass
+ok "a dry run closes nothing" not_logged '^kill'
+ok "a dry run says what it would close" grep -q 't5: would close' "$T/out"
+
 # on, waits and off set the labels on the named terminal.
 watch on t7
-ok "on watches and resets the counts" logged '^label t7 watch=on watch.nudges=0 watch.alerted= watch.handoff=$'
+ok "on watches, resets the counts and marks the lead" logged '^label t7 watch=on watch.nudges=0 watch.alerted= watch.handoff= lead=1 watch.old=$'
 watch waits t7
 ok "waits stops the nudges" logged '^label t7 watch=waits$'
 watch off t7
-ok "off removes the labels" logged '^label t7 watch= watch.nudges= watch.alerted= watch.handoff=$'
+ok "off removes the watch labels and keeps the lead" logged '^label t7 watch= watch.nudges= watch.alerted= watch.handoff=$'
 
 # watcherctl: a dry run writes nothing; install writes both units for this checkout; uninstall removes them.
-ctl() { env PATH="$T/bin:$PATH" STUB_LOG="$T/log" WATCHER_UNIT_DIR="$T/units" "$DIR/watcherctl" "$@" >"$T/out" 2>&1; }
+ctl() {
+  rm -f "$T/log"
+  env PATH="$T/bin:$PATH" STUB_LOG="$T/log" WATCHER_UNIT_DIR="$T/units" "$DIR/watcherctl" "$@" >"$T/out" 2>&1
+}
 ctl install
 ok "an install dry run writes nothing" test ! -e "$T/units"
+ok "an install dry run leaves linger alone" not_logged '^enable-linger'
+STUB_LINGER=yes ctl install --apply
+ok "install leaves linger alone when it is already on" not_logged '^enable-linger'
 ctl install --apply
 ok "install writes the service" grep -qF "ExecStart=$DIR/practice-watch pass --apply" "$T/units/practice-watch.service"
 ok "install writes the timer" grep -q '^OnUnitActiveSec=5min$' "$T/units/practice-watch.timer"
+ok "install turns on linger, so the watcher runs after logout" logged "^enable-linger ${USER:-$(id -un)}\$"
 ctl enable
 ok "enable starts the timer" logged '^--user enable --now practice-watch.timer$'
 ctl uninstall --apply

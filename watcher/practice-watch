@@ -2,20 +2,28 @@
 # The practice's one watcher: keeps a long agent session going while nobody watches it, for example overnight.
 # A session joins by a label on its own hc terminal, so the watcher keeps no files of its own. The user timer that
 # watcher/watcherctl installs runs `practice-watch pass --apply` every 5 minutes.
-#   practice-watch on [TERMINAL]       watch it (label watch=on); resets its nudge count and handoff request. Default: $HC_TERMINAL_ID
+#   practice-watch on [TERMINAL]       watch it (label watch=on) and mark it the lead (lead=1); resets its nudge count
+#                                      and handoff request, and unmarks it old. Default: $HC_TERMINAL_ID
 #   practice-watch waits [TERMINAL]    it waits for the operator (watch=waits): no nudges until `on` again
-#   practice-watch off [TERMINAL]      stop watching it (removes the watch labels)
+#   practice-watch off [TERMINAL]      stop watching it (removes the watch labels); it stays the lead
 #   practice-watch status              each watched terminal, its state and its nudge count
 #   practice-watch handover FILE [TERMINAL] [--apply]
 #                                      start a fresh session that continues from handoff FILE, in the same folder,
-#                                      space and tab, with the same command, on the watch; the old one stays open,
-#                                      off the watch. Without --apply it prints what it would do.
+#                                      space and tab, with the same command, on the watch and the lead (lead=1); the
+#                                      old one stays open, off the watch, no longer the lead and marked old
+#                                      (watch.old=1). The fresh session gets the old one's program and options, never its
+#                                      first message or a resume; it must still run WATCH_START_WAIT seconds (default 5)
+#                                      after start, or the old one stays on the watch. Without --apply it prints what it
+#                                      would do.
 #   practice-watch pass [--apply]      one pass; without --apply it prints what it would do and changes nothing
 # For each terminal labelled watch=on, one pass does one of these:
 #   - working, or idle or done for less than WATCH_QUIET_MIN minutes (default 30): nothing;
 #   - idle or done for longer: a nudge (hc send) that says carry on, take the default on a reversible question, or
 #     label itself watch=waits or watch= ; at most WATCH_MAX_NUDGES nudges (default 12) until `on` again;
 #   - blocked on a prompt, out of nudges, or ended: an alert, once for each such state.
+# Then each old session (watch.old=1) that has been idle or done for WATCH_CLOSE_H hours (default 3) is closed
+# (hc kill and hc rm, which closes its pane), unless it is on the watch or the lead again, or a live terminal it started
+# still runs. Its transcript stays on disk, and the sitrep reads its last reply from there.
 # Before a nudge, a live session that is not blocked and whose status line shows a context (`ctx 260k`) above
 # WATCH_CTX_K thousand tokens (default 250) is asked, once until `on` again, to write a handoff at its next quiet
 # point and then run `practice-watch handover`. Each turn rereads the whole context, so a big one costs on every turn.
@@ -40,14 +48,19 @@ quiet_min=${WATCH_QUIET_MIN:-30}
 max_nudges=${WATCH_MAX_NUDGES:-12}
 call_timeout=${WATCH_CALL_TIMEOUT:-30}
 ctx_k=${WATCH_CTX_K:-250}
-for n in "$quiet_min" "$max_nudges" "$call_timeout" "$ctx_k"; do
-  [[ $n =~ ^[1-9][0-9]*$ ]] || die "WATCH_QUIET_MIN, WATCH_MAX_NUDGES, WATCH_CALL_TIMEOUT and WATCH_CTX_K take a whole number above 0" 2
+close_h=${WATCH_CLOSE_H:-3}
+# How long a fresh session from a handover must stay up before the old one leaves the watch.
+start_wait=${WATCH_START_WAIT:-5}
+for n in "$quiet_min" "$max_nudges" "$call_timeout" "$ctx_k" "$close_h"; do
+  [[ $n =~ ^[1-9][0-9]*$ ]] || die "WATCH_QUIET_MIN, WATCH_MAX_NUDGES, WATCH_CALL_TIMEOUT, WATCH_CTX_K and WATCH_CLOSE_H take a whole number above 0" 2
 done
+[[ $start_wait =~ ^[0-9]+$ ]] || die "WATCH_START_WAIT takes a whole number of seconds" 2
 command -v jq >/dev/null || die "jq is missing"
 command -v hc >/dev/null || die "hc is missing"
 
 hcc=(timeout "$call_timeout" hc)
 me="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/practice-watch"
+PROMPT_HEAD="Continue the work from the handoff at"
 # WATCH_NOW_MS fixes the clock for the tests: a clock step between their read and this one turns 40 idle minutes into 39 or 41 (#123).
 now_ms() { if [[ -n ${WATCH_NOW_MS-} ]]; then printf '%s' "$WATCH_NOW_MS"; else date +%s%3N; fi; }
 
@@ -92,19 +105,50 @@ handoff_text() { # handoff_text ADDRESS K
   printf '%s' "[practice-watch] This session's context is ${2}k tokens, past the ${ctx_k}k cap, and every turn rereads all of it. At the next quiet point (no agent report waiting, no merge half done), write a handoff so a fresh session continues from it. Then tell the operator where the handoff is and run: $me handover <the handoff file> $1 --apply . That starts the fresh session and takes this one off the watch. If you cannot write a handoff, say why and run: hc label $1 watch=waits"
 }
 
+# Claude Code's options that take a value (claude --help): the value goes with its option. A variadic one keeps one value.
+VALUE_OPTS=" --add-dir --agent --agents --allowedTools --append-system-prompt --autocompact --betas --debug-file --disallowedTools --effort --environment --fallback-model --file --input-format --json-schema --max-budget-usd --mcp-config --model -n --name --output-format --permission-mode --permission-prompts --plugin-dir --plugin-url --remote-control-session-name-prefix --setting-sources --settings --system-prompt --system-prompt-snapshot --tools "
+# Options that reopen the old conversation; a fresh session leaves them out, with their id.
+RESUME_OPTS=" -c --continue -r --resume --session-id --fork-session --from-pr --teleport "
+
+# fresh_command ARGV...: the old session's program and its options, one per line, without any prompt it was started with (a
+# launch prompt replayed in a fresh session, or one with a line starting with -, breaks it) and without a resume.
+fresh_command() {
+  local a name
+  printf '%s\n' "$1"
+  shift
+  while (($# > 0)); do
+    a=$1 name=${1%%=*}
+    shift
+    if [[ $a == -- ]]; then
+      break
+    elif [[ ! $a =~ ^--?[A-Za-z][A-Za-z0-9-]*(=.*)?$ ]]; then
+      continue # not an option (`-x`, `--name`, `--name=value`): the prompt, whatever it starts with
+    elif [[ $RESUME_OPTS == *" $name "* ]]; then
+      if [[ $a != *=* && $# -gt 0 && ! $1 =~ ^--?[A-Za-z] ]]; then shift; fi
+    else
+      printf '%s\n' "$a"
+      if [[ $a != *=* && $VALUE_OPTS == *" $a "* && $# -gt 0 ]]; then
+        printf '%s\n' "$1"
+        shift
+      fi
+    fi
+  done
+}
+
 handover() { # handover FILE TERMINAL APPLY
-  local file=$1 t=$2 apply=$3 info cwd label v new
-  local -a argv labels=(--label watch=on)
+  local file=$1 t=$2 apply=$3 info cwd label v new state
+  local -a argv old labels=(--label watch=on --label lead=1)
   [[ -f $file ]] || die "no handoff file at $file" 2
   file=$(realpath -- "$file")
   info=$("${hcc[@]}" get "$t" --json) || die "hc get $t did not answer"
   cwd=$(jq -r '.foreground.cwd // .cwd' <<<"$info")
-  mapfile -t argv < <(jq -r '.foreground.argv // ["claude"] | .[]' <<<"$info")
+  mapfile -t old < <(jq -r '.foreground.argv // ["claude"] | .[]' <<<"$info")
+  mapfile -t argv < <(fresh_command "${old[@]}")
   for label in herdr.space herdr.tab; do
     v=$(jq -r --arg l "$label" '.labels[$l] // ""' <<<"$info")
     [[ -n $v ]] && labels+=(--label "$label=$v")
   done
-  argv+=("Continue the work from the handoff at $file. Read it first. This session is on the practice watch.")
+  argv+=("$PROMPT_HEAD $file. Read it first. This session is on the practice watch.")
   if ((! apply)); then
     printf 'practice-watch: would start in %s: %s\n' "$cwd" "${argv[*]}"
     printf 'practice-watch: would take %s off the watch; to apply: practice-watch handover %s %s --apply\n' "$t" "$file" "$t"
@@ -112,8 +156,48 @@ handover() { # handover FILE TERMINAL APPLY
   fi
   new=$("${hcc[@]}" run --json --bg --no-parent --cwd "$cwd" "${labels[@]}" -- "${argv[@]}" | jq -r '.address // ""') || new=
   [[ -n $new ]] || die "hc run did not start the fresh session; $t stays on the watch"
-  "${hcc[@]}" label "$t" watch= watch.nudges= watch.alerted= watch.handoff= >/dev/null
-  printf 'practice-watch: started %s from %s; %s is off the watch and stays open\n' "$new" "$file" "$t"
+  # A session that dies at start (a bad option, say) must not leave nobody on the watch.
+  sleep "$start_wait"
+  state=$("${hcc[@]}" get "$new" --json | jq -r '.state // ""') || state=
+  if [[ $state != live ]]; then
+    printf 'practice-watch: %s said: %s\n' "$new" "$("${hcc[@]}" read "$new" 2>/dev/null | tail -n 3 | tr '\n' ' ')" >&2
+    die "the fresh session $new did not stay up (state ${state:-unknown}); $t stays on the watch"
+  fi
+  "${hcc[@]}" label "$t" watch= watch.nudges= watch.alerted= watch.handoff= lead= watch.old=1 >/dev/null
+  printf 'practice-watch: started %s from %s; %s is off the watch and no longer the lead, and closes after %s idle hours\n' "$new" "$file" "$t" "$close_h"
+}
+
+# close_old APPLY: close each old session that has sat idle or done for close_h hours, unless it is needed again.
+close_old() {
+  local apply=$1 old live addr info parents="" mins
+  old=$("${hcc[@]}" ls --label watch.old=1 --json) || return 0
+  [[ -n $(jq -r '.terminals[].address' <<<"$old") ]] || return 0
+  # A worker ends with its parent, so a parent with a live worker stays. When any terminal cannot be read, none closes.
+  live=$("${hcc[@]}" ls --json) || return 0
+  for addr in $(jq -r '.terminals[].address' <<<"$live"); do
+    info=$("${hcc[@]}" get "$addr" --json) || {
+      printf 'practice-watch: hc get %s did not answer; no old session closes this pass\n' "$addr" >&2
+      return 0
+    }
+    parents+=" $(jq -r '.parent // ""' <<<"$info") "
+  done
+  for addr in $(jq -r '.terminals[].address' <<<"$old"); do
+    info=$("${hcc[@]}" get "$addr" --json) || continue
+    mins=$(jq -r --argjson now "$(now_ms)" '
+      (.status | if type == "object" then .state else . end // "") as $s
+      | if .state == "live" and ($s == "idle" or $s == "done") and (.labels.watch // "") == "" and (.labels.lead // "") == ""
+        then ($now - (.status_ms // $now)) / 60000 | floor else -1 end' <<<"$info")
+    ((mins >= close_h * 60)) || continue
+    if [[ $parents == *" $addr "* ]]; then
+      printf 'practice-watch: %s: old and idle, but a terminal it started still runs; left open\n' "$addr"
+    elif ((! apply)); then
+      printf 'practice-watch: %s: would close (old, idle %s min)\n' "$addr" "$mins"
+    elif "${hcc[@]}" kill "$addr" >/dev/null && "${hcc[@]}" rm "$addr" >/dev/null; then
+      printf 'practice-watch: %s: closed (old, idle %s min)\n' "$addr" "$mins"
+    else
+      printf 'practice-watch: %s: did not close; the next pass tries again\n' "$addr" >&2
+    fi
+  done
 }
 
 pass() {
@@ -183,7 +267,7 @@ case $cmd in
   on)
     (($# <= 1)) || usage
     t=$(terminal "${1-}")
-    "${hcc[@]}" label "$t" watch=on watch.nudges=0 watch.alerted= watch.handoff= >/dev/null
+    "${hcc[@]}" label "$t" watch=on watch.nudges=0 watch.alerted= watch.handoff= lead=1 watch.old= >/dev/null
     printf 'practice-watch: watching %s\n' "$t"
     ;;
   waits)
@@ -227,6 +311,7 @@ case $cmd in
       exit 0
     }
     pass "$apply"
+    close_old "$apply"
     ((apply)) || printf 'practice-watch: dry run; to apply: practice-watch pass --apply\n'
     ;;
   *) usage ;;

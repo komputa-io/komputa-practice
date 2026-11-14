@@ -11,3 +11,4 @@ Use these pages to look something up. Each page except the rules is generated fr
 - [Template questions](/reference/template-questions): every question that `copier copy` asks.
 - [Lead-only rules](/reference/lead-rules): the extra rules for a lead that starts workers.
 - [Repo layout](/reference/repo-layout): what each folder and file of the repo holds.
+- [Changes](/reference/changes): every pull request merged into the practice, under the version it shipped in.

@@ -30,7 +30,7 @@ Use this guide for work that needs many pull requests: a new app, a large featur
 
 5. **For a project in milestones, set the threat model first.** The architecture doc states the threat model and the severity scale (impact times likelihood). Each milestone gets one review and one fix round. After that, only a high finding reopens it; the rest go to issues for the next planned work.
 
-6. **Hand over before the context fills.** A long session writes a handoff file before its context gets too big. A fresh session starts from the handoff, not from the old conversation. When nobody watches, [the watcher](/explanation/the-watcher) asks for the handoff, and nudges a session that has gone idle.
+6. **Hand over before the context fills.** A long session writes a handoff file before its context gets too big. A fresh session starts from the handoff, not from the old conversation. When nobody watches, [the watcher](/explanation/the-watcher) asks for the handoff, starts the fresh session from it, and nudges a session that has gone idle.
 
 ## Check it worked
 
@@ -41,7 +41,7 @@ Use this guide for work that needs many pull requests: a new app, a large featur
   python3 ~/Code/komputa-practice/scripts/program-scorecard.py --repo . --since <first day>
   ```
 
-  It prints the pull requests merged each day, the median hours from first commit to merge, and the share of fix pull requests. A high fix share means the plan or the checks missed something.
+  It counts merge commits and squash merges. It prints the practice version the repo was on (from `.copier-answers.yml`), the pull requests merged each day, the median hours from first commit to merge, and the share of fix pull requests. A high fix share means the plan or the checks missed something.
 
 ## What can go wrong
 
@@ -53,4 +53,3 @@ Use this guide for work that needs many pull requests: a new app, a large featur
 
 - [The watcher](/explanation/the-watcher): keep a long session going while nobody watches it.
 - [Context economics](/explanation/context-economics): why the handoff limits are where they are.
-- [Framework evidence](/explanation/framework-evidence): how a program is measured.

@@ -144,6 +144,10 @@ jobs:
       commands: |
         set -e
 {{- publish_setup() }}
+        # skopeo looks up image digests for the refresh's image section. No CI
+        # image has it or docker, and Debian packages it. A failed install only
+        # skips the image section, which says so.
+        apt-get update -qq && apt-get install -y -qq --no-install-recommends skopeo >/dev/null || true
         scripts/update-deps.sh
     envVars:
     - name: ODEV_USER
@@ -173,6 +177,20 @@ jobs:
     useTTY: false
     condition: ALL_PREVIOUS_STEPS_WERE_SUCCESSFUL
 {%- endfor %}
+  - !CommandStep
+    name: Refresh image pins
+    runInContainer: true
+    image: {{ images['shell'] }}
+    interpreter: !DefaultInterpreter
+      commands: |
+        set -e
+        # skopeo looks up image digests for the refresh's image section. No CI
+        # image has it or docker, and Debian packages it. A failed install only
+        # skips the image section, which says so.
+        apt-get update -qq && apt-get install -y -qq --no-install-recommends skopeo >/dev/null || true
+        scripts/update-deps.sh --refresh-only --only images
+    useTTY: false
+    condition: ALL_PREVIOUS_STEPS_WERE_SUCCESSFUL
   - !CommandStep
     name: Open a PR
     runInContainer: true

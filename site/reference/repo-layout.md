@@ -20,8 +20,7 @@ Each path in the practice repo, and what it holds.
 | `rules/leadonly-rules.md` | Rules for a lead that starts workers. Not loaded by default. |
 | `docs/model-selection.md` | How each agent's model is chosen: the role lines and the move-up rule. |
 | `docs/quality-funnel.png` | The quality funnel picture. `docs/quality-funnel.html` is its source. |
-| `docs/framework-evidence.md` | What one program built by this practice caught and what it cost, the trade-off of each change since, and how the next period is measured. |
-| `scripts/program-scorecard.py` | Reads the merged pull requests of a repo from git and prints the scorecard that the evidence page uses. |
+| `scripts/program-scorecard.py` | Reads the merged pull requests of a repo from git and prints a scorecard: pull requests by kind, the lines each added, and the measures of "What success is". |
 | `docs/context-economics.md` | Where the tokens go when agents run as workers: what we measured on a real project, what we learned, and why the budget and wait rules say what they say. |
 | `hooks/block-secret-write.sh` | A Claude Code `PreToolUse` hook for Write and Edit (and Codex `apply_patch`). It refuses content that matches a secret pattern, and names the machine's secret tool from `HOOK_SECRET_TOOL`. |
 | `hooks/block-credential-read.sh` | A Claude Code `PreToolUse` hook for Read and Bash. It refuses reading a credential file (SSH keys, `.netrc`, `.env`, the Claude credentials); counts and key names pass. |
@@ -37,7 +36,7 @@ Each path in the practice repo, and what it holds.
 | `hooks/block-test-weakening.sh` | A Claude Code `PreToolUse` hook for Write and Edit. It refuses an edit that deletes or weakens a test (`block-test-weakening.py` holds the logic). |
 | `hooks/block-test-weakening.test.sh` | Tests for the hook. |
 | `watcher/practice-watch` | The one watcher: a pass over each `hc` session labelled `watch=on` that nudges one gone idle and alerts once on one blocked, out of nudges or ended. `site/explanation/the-watcher.md` explains it. |
-| `watcher/watcherctl` | Installs, removes, switches on and off the watcher's systemd user timer (`install`, `uninstall`, `enable`, `disable`, `status`). |
+| `watcher/watcherctl` | Installs, removes, switches on and off the watcher's systemd user timer (`install`, `uninstall`, `enable`, `disable`, `status`). `install` also turns on linger, so the timer runs after logout. |
 | `watcher/practice-watch.test.sh` | Tests for both, against stub `hc` and `systemctl`. |
 | `scripts/check.sh` | Runs every check in this repo. CI (`.github/workflows/check.yml`) runs the same command. |
 | `scripts/scrub-check.sh` | The check that keeps private items out of this repo. |

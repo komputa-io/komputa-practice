@@ -68,6 +68,10 @@ Read the reference before you apply a rule in depth.
   below both the use cases and the data access. The core references nothing
   that does I/O.
 - Libraries and CLIs: deep modules, not slices.
+- Tooling the product does not ship (generators, diagram and map scripts,
+  one-off utilities) lives in one top-level `tools/` folder, outside the
+  solution and its build. The gate still lints and scans it, and a PR that
+  touches only `tools/` still merges on green checks.
 - At most three layers. A fourth needs an ADR.
 - Commands and queries are separate slices. A query projects; it never loads
   entities to map them.

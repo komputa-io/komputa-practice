@@ -6,6 +6,8 @@
 #   watcherctl disable               stop the timer; a running pass finishes
 #   watcherctl status                the timer's state, its last passes, and the watched terminals
 # install and uninstall are dry runs without --apply: they print what they would change and the command to apply.
+# install also turns on linger for this user (loginctl enable-linger), so user services and timers run after logout
+# and from boot: without it the watcher stops when the operator logs out, which is when it is needed.
 # The service runs this checkout's practice-watch, so a pull changes the watcher with no reinstall. Its settings
 # (WATCH_QUIET_MIN, WATCH_MAX_NUDGES, WATCH_ALERT_CMD) go in ~/.config/practice-watch.env, which is optional.
 # Exit codes: 0 done; 1 an error; 2 misuse.
@@ -23,6 +25,7 @@ usage() {
 
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 units=${WATCHER_UNIT_DIR:-$HOME/.config/systemd/user}
+user=${USER:-$(id -un)}
 command -v systemctl >/dev/null || die "systemctl is missing: the watcher runs as a systemd user timer"
 
 service_text() {
@@ -69,11 +72,18 @@ case $cmd in
   install)
     (($# <= 1)) || usage
     apply=$(apply_flag "${1-}")
+    linger=$(loginctl show-user "$user" --property=Linger --value 2>/dev/null || true)
     if ((! apply)); then
       printf 'watcherctl: would write %s/practice-watch.service (runs %s/practice-watch pass --apply)\n' "$units" "$here"
       printf 'watcherctl: would write %s/practice-watch.timer (every 5 minutes)\n' "$units"
+      [[ $linger == yes ]] || printf 'watcherctl: would run loginctl enable-linger %s (user services keep running after logout)\n' "$user"
       printf 'watcherctl: dry run; to apply: %s/watcherctl install --apply, then watcherctl enable\n' "$here"
       exit 0
+    fi
+    if [[ $linger != yes ]]; then
+      command -v loginctl >/dev/null || die "loginctl is missing: it turns on linger, without which the watcher stops at logout"
+      loginctl enable-linger "$user" || die "loginctl enable-linger $user failed: without it the watcher stops at logout"
+      printf 'watcherctl: linger on for %s: user services keep running after logout\n' "$user"
     fi
     mkdir -p "$units"
     service_text >"$units/practice-watch.service"

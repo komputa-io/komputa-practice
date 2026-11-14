@@ -6,7 +6,9 @@ description: How one small timer keeps a long agent session going while nobody w
 A long session sometimes stops with work left: it ends a turn on a question,
 or waits out a usage limit, and nobody is there to say "carry on". The
 watcher is the one process that notices. It is `watcher/practice-watch`, run
-every 5 minutes by a systemd user timer.
+every 5 minutes by a systemd user timer. `watcherctl install` turns on linger
+for your user, because without it systemd stops a user's timers at logout,
+which is when the watcher is needed.
 
 There is one watcher, and it stays one. When we need to watch for another
 event, it becomes one more case in the same pass, not a second script or a
@@ -30,6 +32,9 @@ and does one thing with each.
 | out of nudges (12) | alerts you, once, and stops nudging |
 | ended | alerts you, once |
 | live, not blocked, with a context past 250k | asks it, once, for a handoff and a handover (in place of a nudge) |
+
+Then the pass closes each old session that a [handover](#handover) left
+behind, once it has been idle for 3 hours.
 
 A nudge is one message, typed into the session through `hc send`:
 
@@ -56,6 +61,8 @@ The service reads `~/.config/practice-watch.env` when it exists:
 | `WATCH_MAX_NUDGES` | 12 | Nudges before the watcher gives up and alerts. `practice-watch on` resets the count |
 | `WATCH_ALERT_CMD` | none | A command that gets each alert as `$1` |
 | `WATCH_CALL_TIMEOUT` | 30 | Seconds for each `hc` call and the alert command; a send gets four times that |
+| `WATCH_CTX_K` | 250 | Context, in thousands of tokens, past which a session is asked for a handoff |
+| `WATCH_CLOSE_H` | 3 | Hours an old session sits idle after a handover before the pass closes it |
 
 With the defaults, a session that waits out a usage limit is nudged every
 half hour for six hours, then you hear about it.
@@ -70,6 +77,9 @@ half hour for six hours, then you hear about it.
   began, so a session blocked all night is one alert, not a hundred.
 - **It gives up.** After `WATCH_MAX_NUDGES` nudges it stops and tells you.
   A nudge that does not go through is not counted.
+- **It closes only what a handover left behind.** A pass closes a session
+  only when a handover marked it old, it has been idle for `WATCH_CLOSE_H`
+  hours, and no worker it started still runs.
 - **It decides nothing when `hc` is down.** The pass prints one line and
   waits for the next one.
 - **Two passes never overlap.** One `flock` holds the pass, and each call
@@ -88,8 +98,17 @@ practice-watch handover <handoff file> <terminal> --apply
 
 That starts a fresh session in the same folder, space and tab, with the same
 `claude` command and the handoff as its first message, and puts it on the
-watch. The old session comes off the watch and stays open; close it when you
-choose. Without `--apply`, `handover` prints what it would do.
+watch. The fresh session also gets the `lead=1` label, and the old one loses
+it, so `hc ls --label lead=1` finds the current lead even after several
+handovers.
+`practice-watch on` marks the lead too; `off` leaves it. The old session comes
+off the watch and is marked old (`watch.old=1`), so it can still pass on a
+report that arrives late. Once it has been idle for 3 hours (`WATCH_CLOSE_H`),
+a pass closes it with `hc kill` and `hc rm`, which also closes its pane. A
+pass leaves it open while a terminal it started still runs, or once it is on
+the watch or the lead again. Its transcript stays on disk
+(`~/.claude/projects/`), so what it last said can still be read. Without
+`--apply`, `handover` prints what it would do.
 
 ## Where it came from
 
