@@ -6,12 +6,15 @@ scripts go through shellcheck and shfmt here too.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import shutil
 import tomllib
 import subprocess
 import time
 import xml.etree.ElementTree as ET
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -83,6 +86,11 @@ COMMON_FILES = [
     "scripts/gate.sh",
     "scripts/gate.md",
     "scripts/update-deps.sh",
+    "scripts/deslop-pr.sh",
+    "scripts/deslop-comment.sh",
+    "scripts/deslop-issues.sh",
+    "scripts/deslop.pin",
+    ".deslop.toml",
     ".secrets.baseline",
 ]
 
@@ -96,6 +104,7 @@ FORGE_FILES = {
     "github": [
         ".github/pull_request_template.md",
         ".github/workflows/gate.yml",
+        ".github/workflows/deslop-nightly.yml",
         "scripts/forge/github.sh",
     ],
 }
@@ -159,6 +168,9 @@ def test_rendered_scripts_pass_shellcheck_and_shfmt(tmp_path, name):
     scripts = [
         out / "scripts/gate.sh",
         out / "scripts/update-deps.sh",
+        out / "scripts/deslop-pr.sh",
+        out / "scripts/deslop-comment.sh",
+        out / "scripts/deslop-issues.sh",
         out / ".githooks/pre-commit",
         *out.glob("scripts/install-cargo-deny.sh"),
         *out.glob("scripts/forge/*.sh"),
@@ -1251,6 +1263,7 @@ def test_a_github_repo_gets_the_github_files_and_no_onedev_ones(tmp_path):
 def test_github_ci_runs_the_whole_gate_in_one_job_when_one_image_has_every_tool(tmp_path):
     out = render(tmp_path / "p", ["python", "shell"], forge="github")
     jobs = yaml.safe_load((out / ".github/workflows/gate.yml").read_text())["jobs"]
+    jobs.pop("deslop")
     assert list(jobs) == ["gate"]
     assert jobs["gate"]["container"].startswith("ghcr.io/astral-sh/uv:python")
     assert jobs["gate"]["steps"][-1]["run"] == "scripts/gate.sh --full"
@@ -1262,6 +1275,7 @@ def test_github_ci_runs_each_language_in_its_own_job_with_its_logins(tmp_path):
         tmp_path / "p", COMBOS["subfolders"], forge="github", **EXTRA["subfolders"], **PRIVATE
     )
     jobs = yaml.safe_load((out / ".github/workflows/gate.yml").read_text())["jobs"]
+    jobs.pop("deslop")
     assert [j["name"] for j in jobs.values()] == [
         "Gate Python",
         "Gate .NET",
@@ -1570,3 +1584,432 @@ def test_a_bad_test_folder_answer_is_refused(tmp_path):
     ):
         with pytest.raises(ValueError):
             render(tmp_path / str(i), ["python"], **bad)
+
+
+# --- The Deslop PR check
+
+DESLOP_SCRIPTS = TEMPLATE / "template/scripts"
+CLUSTER = {
+    "kind": "nearly_identical",
+    "mass": 90,
+    "intersects_diff": True,
+    "occurrences": [
+        {"path": "new.ts", "start_line": 1, "end_line": 9, "in_diff": True},
+        {"path": "old.ts", "start_line": 5, "end_line": 13, "in_diff": False},
+    ],
+}
+
+
+def _report(tmp_path: Path, clusters: list[dict]) -> Path:
+    f = tmp_path / "report.json"
+    f.write_text(
+        json.dumps({"clusters": clusters, "metrics": {"diff": {"duplication_percent": 12.34}}})
+    )
+    return f
+
+
+def _comment(
+    tmp_path: Path, *args: str, gh_list: str = ""
+) -> tuple[subprocess.CompletedProcess[str], str]:
+    stub = tmp_path / "stub"
+    stub.mkdir(parents=True, exist_ok=True)
+    # gh answers a listing with gh_list; any other call is logged with its stdin.
+    (stub / "gh").write_text(
+        '#!/usr/bin/env bash\nif [[ " $* " == *" --paginate "* ]]; then echo "$GH_LIST"; exit 0; fi\n'
+        'echo "gh $*" >>"$STUB_LOG"; cat >>"$STUB_LOG"\n'
+    )
+    (stub / "gh").chmod(0o755)
+    log = tmp_path / "gh.log"
+    env = {
+        **os.environ,
+        "PATH": f"{stub}:{os.environ['PATH']}",
+        "GH_LIST": gh_list,
+        "STUB_LOG": str(log),
+        "GH_TOKEN": "s3cret-token",
+        "GITHUB_REPOSITORY": "o/r",
+    }
+    done = subprocess.run(
+        [str(DESLOP_SCRIPTS / "deslop-comment.sh"), *args], capture_output=True, text=True, env=env
+    )
+    assert "s3cret-token" not in done.stdout + done.stderr
+    return done, log.read_text() if log.exists() else ""
+
+
+def test_the_comment_names_each_duplicate_and_where_its_twin_is(tmp_path):
+    done, _ = _comment(tmp_path, "--report", str(_report(tmp_path, [CLUSTER])))
+    assert done.returncode == 0, done.stderr
+    assert done.stdout.startswith(
+        "<!-- deslop-pr -->\n**Deslop:** This PR adds 1 duplicate (12.3% of its added lines)."
+    )
+    assert "1. **nearly identical**: new `new.ts:1-9`; existing copy `old.ts:5-13`" in done.stdout
+    assert "dry run" in done.stdout
+
+
+def test_the_comment_edits_its_earlier_comment_instead_of_adding_one(tmp_path):
+    report = str(_report(tmp_path, [CLUSTER]))
+    args = ("--report", report, "--forge", "github", "--pr", "7", "--post")
+    done, log = _comment(tmp_path, *args, gh_list="42")
+    assert done.returncode == 0, done.stderr
+    assert "gh api -X PATCH repos/o/r/issues/comments/42 -F body=@-" in log
+    assert "POST" not in log
+    done, log = _comment(tmp_path / "fresh", *args)
+    assert "gh api -X POST repos/o/r/issues/7/comments" in log
+
+
+def test_with_no_duplicates_it_updates_an_old_comment_but_posts_no_new_one(tmp_path):
+    args = ("--report", str(_report(tmp_path, [])), "--forge", "github", "--pr", "7", "--post")
+    _, log = _comment(tmp_path, *args)
+    assert log == ""
+    _, log = _comment(tmp_path / "old", *args, gh_list="42")
+    assert "No new duplicates." in log
+
+
+def _deslop_release(tmp_path: Path, exit_code: int) -> dict[str, str]:
+    """A fake release tarball, a pin for it, and the env that points the script at both."""
+    pkg = tmp_path / "pkg/deslop-0.40.1-linux-x64"
+    pkg.mkdir(parents=True)
+    (pkg / "deslop").write_text(f'#!/usr/bin/env bash\necho "$@" >"$STUB_LOG"\nexit {exit_code}\n')
+    (pkg / "deslop").chmod(0o755)
+    rel = tmp_path / "rel/v0.40.1"
+    rel.mkdir(parents=True)
+    tar = rel / "deslop-0.40.1-linux-x64.tar.gz"
+    subprocess.run(["tar", "-czf", str(tar), "-C", str(tmp_path / "pkg"), "."], check=True)
+    return {
+        **os.environ,
+        "DESLOP_DOWNLOAD_BASE": f"file://{tmp_path}/rel",
+        "STUB_LOG": str(tmp_path / "argv"),
+    }
+
+
+def _deslop_pr(
+    tmp_path: Path, sha: str = "", exit_code: int = 0
+) -> subprocess.CompletedProcess[str]:
+    env = _deslop_release(tmp_path, exit_code)
+    tar = tmp_path / "rel/v0.40.1/deslop-0.40.1-linux-x64.tar.gz"
+    sha = sha or hashlib.sha256(tar.read_bytes()).hexdigest()
+    repo = tmp_path / "repo"
+    shutil.copytree(DESLOP_SCRIPTS, repo / "scripts", ignore=shutil.ignore_patterns("forge"))
+    (repo / "scripts/deslop.pin").write_text(f"version=0.40.1\nsha256={sha}\n")
+    subprocess.run(["git", "init", "-q", "-b", "main", str(repo)], check=True)
+    _repo(repo)
+    git(repo, "add", "-A")
+    git(repo, "commit", "-q", "--no-verify", "-m", "init")
+    return subprocess.run(
+        [str(repo / "scripts/deslop-pr.sh"), "HEAD"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+
+def test_the_pr_check_scans_only_the_diff_and_never_fails_over_a_finding(tmp_path):
+    done = _deslop_pr(tmp_path)
+    assert done.returncode == 0, done.stderr
+    argv = (tmp_path / "argv").read_text()
+    assert "--only-changed --no-incremental" in argv and "--no-fail-over" in argv
+
+
+def test_a_wrong_checksum_or_a_deslop_crash_fails_the_check(tmp_path):
+    wrong = _deslop_pr(tmp_path / "a", "0" * 64)
+    assert wrong.returncode == 1 and "does not match the checksum" in wrong.stderr
+    crash = _deslop_pr(tmp_path / "b", exit_code=7)
+    assert crash.returncode == 1 and "Deslop crashed (exit 7)" in crash.stderr
+
+
+@pytest.mark.parametrize("forge", ["github", "onedev"])
+def test_ci_runs_the_deslop_check_on_pull_requests_with_the_pinned_release(tmp_path, forge):
+    out = render(tmp_path / "p", ["shell"], forge=forge, deslop_fail_over="10")
+    ci = (
+        out / (".github/workflows/gate.yml" if forge == "github" else ".onedev-buildspec.yml")
+    ).read_text()
+    assert (
+        "scripts/deslop-pr.sh" in ci
+        and "--fail-over 10" in ci
+        and "scripts/deslop-comment.sh" in ci
+    )
+    pin = (out / "scripts/deslop.pin").read_text()
+    assert pin == (DESLOP_SCRIPTS / "deslop.pin").read_text()
+    assert "version=0.42.0\n" in pin and "sha256=a06b7f63" in pin and "min_age_days=0\n" in pin
+    if forge == "github":
+        jobs = yaml.safe_load(ci)["jobs"]
+        assert jobs["deslop"]["permissions"]["pull-requests"] == "write"
+        assert [j for j in jobs if "permissions" in jobs[j]] == ["deslop"]
+    else:
+        assert "@secret:ONEDEV_COMMENT_TOKEN@" in ci
+
+
+STUB_ODEV_CURL = r"""#!/usr/bin/env bash
+# Answers OneDev's REST calls; logs each call's argv and body (never the header).
+url=${*: -1}
+case "$url" in
+  */pulls/9/comments) echo "$COMMENTS" ;;
+  */~api/pulls) echo '[{"id": 9}]' ;;
+  */users/me) echo '{"id": 3}' ;;
+  *) echo "curl $*" >>"$STUB_LOG"; cat >>"$STUB_LOG" ;;
+esac
+"""
+
+
+def _onedev_comment(tmp_path: Path, comments: str) -> tuple[subprocess.CompletedProcess[str], str]:
+    stub = tmp_path / "stub"
+    stub.mkdir(parents=True)
+    (stub / "curl").write_text(STUB_ODEV_CURL)
+    (stub / "curl").chmod(0o755)
+    log = tmp_path / "curl.log"
+    env = {
+        **os.environ,
+        "PATH": f"{stub}:{os.environ['PATH']}",
+        "COMMENTS": comments,
+        "STUB_LOG": str(log),
+        "ODEV_HOST": "http://forge.test",
+        "ODEV_PROJECT": "team/demo",
+        "ODEV_TOKEN": "s3cret-token",
+    }
+    args = [
+        "--report",
+        str(_report(tmp_path, [CLUSTER])),
+        "--forge",
+        "onedev",
+        "--pr",
+        "7",
+        "--post",
+    ]
+    done = subprocess.run(
+        [str(DESLOP_SCRIPTS / "deslop-comment.sh"), *args], capture_output=True, text=True, env=env
+    )
+    text = log.read_text() if log.exists() else ""
+    assert "s3cret-token" not in done.stdout + done.stderr + text
+    return done, text
+
+
+def test_on_onedev_the_comment_is_edited_with_a_bare_body_or_added_with_a_user(tmp_path):
+    done, log = _onedev_comment(
+        tmp_path / "a", '[{"id": 5, "content": "<!-- deslop-pr -->\\nold"}]'
+    )
+    assert done.returncode == 0, done.stderr
+    assert "-X POST" in log and "/~api/pull-request-comments/5" in log
+    assert "\n<!-- deslop-pr -->\n**Deslop:** This PR adds 1 duplicate" in log
+    done, log = _onedev_comment(tmp_path / "b", "[]")
+    assert done.returncode == 0, done.stderr
+    assert '"requestId": 9' in log and '"userId": 3' in log and "pull-request-comments/" not in log
+
+
+def _deslop_refresh(
+    tmp_path: Path, published: str, pin_age: str | None, sha256: str | None
+) -> tuple[subprocess.CompletedProcess[str], str, str]:
+    """update-deps' Deslop section against a stub release v0.42.1, published then."""
+    out = render(tmp_path / "p", ["shell"], forge="github")
+    pin = out / "scripts/deslop.pin"
+    text = pin.read_text().replace("min_age_days=0\n", "")
+    pin.write_text(text + (f"min_age_days={pin_age}\n" if pin_age is not None else ""))
+    stub = tmp_path / "stub"
+    stub.mkdir()
+    release = (
+        '    "tag_name": "v0.42.1",\\n    "draft": false,\\n    "prerelease": false,\\n'
+        f'    "published_at": "{published}",\\n'
+    )
+    sum_line = (
+        f"printf '{sha256}  deslop-0.42.1-linux-x64.tar.gz\\n'; exit 0" if sha256 else "exit 22"
+    )
+    (stub / "curl").write_text(
+        "#!/usr/bin/env bash\n"
+        f"if [[ \" $* \" == *releases\\?* ]]; then printf '{release}'; exit 0; fi\n"
+        f'if [[ " $* " == *.sha256* ]]; then {sum_line}; fi\nexit 22\n'
+    )
+    (stub / "curl").chmod(0o755)
+    env = {**os.environ, "PATH": f"{stub}:{os.environ['PATH']}"}
+    before = pin.read_text()
+    done = subprocess.run(
+        [str(out / "scripts/update-deps.sh"), "--refresh-only", "--only", "deslop"],
+        cwd=out, capture_output=True, text=True, env=env,
+    )  # fmt: skip
+    return done, before, pin.read_text()
+
+
+def test_the_deps_refresh_keeps_the_pin_when_the_release_has_no_checksum(tmp_path):
+    done, before, after = _deslop_refresh(tmp_path, "2020-01-01T00:00:00Z", "0", None)
+    assert "Deslop stays at 0.42.0: no checksum for 0.42.1" in done.stdout
+    assert after == before
+
+
+def test_deslop_takes_a_release_at_once_with_min_age_zero_and_waits_seven_days_without_it(tmp_path):
+    today = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    sha = "b" * 64
+    done, _, after = _deslop_refresh(tmp_path / "zero", today, "0", sha)
+    assert "Deslop moves from 0.42.0 to 0.42.1" in done.stdout, done.stdout + done.stderr
+    assert (
+        "version=0.42.1\n" in after and f"sha256={sha}\n" in after and "min_age_days=0\n" in after
+    )
+    done, before, after = _deslop_refresh(tmp_path / "default", today, None, sha)
+    assert after == before, done.stdout
+
+
+def _cl(cid: str, mass: int, kind: str = "nearly_identical") -> dict:
+    return {"id": cid, "kind": kind, "mass": mass, "occurrences": [
+        {"path": f"{cid}.py", "start_line": 1, "end_line": 2},
+        {"path": "b.py", "start_line": 5, "end_line": 6},
+    ]}  # fmt: skip
+
+
+STUB_GH_ISSUES = """#!/usr/bin/env bash
+if [[ " $* " == *" --paginate "* ]]; then [[ "$*" == *state=all* ]] && echo "$GH_LIST" || echo "[]"; exit 0; fi
+echo "gh $*" >>"$STUB_LOG"; [[ " $* " == *" body=@- "* ]] && { cat >>"$STUB_LOG"; echo >>"$STUB_LOG"; }; exit 0
+"""
+STUB_ONEDEV_ISSUES = """#!/usr/bin/env bash
+url=${*: -1}
+case "$url" in
+  */projects/ids/*) echo 7 ;;
+  *) if [[ "$*" == *" -G "* ]]; then echo "$GH_LIST"; else
+       body=$(cat)
+       if [[ -n "${NO_TRIAGE:-}" && "$body" == *Triage* ]]; then exit 22; fi
+       printf 'curl %s\\n%s\\n' "$*" "$body" >>"$STUB_LOG"
+     fi ;;
+esac
+"""
+
+
+def _nightly(tmp_path, clusters, prev=None, listed="[]", forge="github", emb=False):
+    """Runs deslop-issues.sh --post against stub gh/curl; returns the log and the new state."""
+    stub = tmp_path / "stub"
+    stub.mkdir(parents=True)
+    tool = "gh" if forge == "github" else "curl"
+    (stub / tool).write_text(STUB_GH_ISSUES if forge == "github" else STUB_ONEDEV_ISSUES)
+    (stub / tool).chmod(0o755)
+    rep = tmp_path / "r.json"
+    rep.write_text(json.dumps({"clusters": clusters, "embedding_provenance": {} if emb else None,
+        "metrics": {"duplication_percent": 2.34, "duplicated_loc": 5, "analysed_loc": 200}}))  # fmt: skip
+    state = tmp_path / "state/s.json"
+    if prev is not None:
+        state.parent.mkdir()
+        state.write_text(json.dumps({"runs": [], "clusters": prev}))
+    log = tmp_path / "log"
+    env = {**os.environ, "PATH": f"{stub}:{os.environ['PATH']}", "GH_LIST": listed, "STUB_LOG": str(log),
+        "GH_TOKEN": "s3cret-token", "GITHUB_REPOSITORY": "o/r", "ODEV_HOST": "http://forge.test",
+        "ODEV_PROJECT": "team/demo", "ODEV_TOKEN": "s3cret-token"}  # fmt: skip
+    done = subprocess.run([str(DESLOP_SCRIPTS / "deslop-issues.sh"), "--report", str(rep), "--state", str(state),
+        "--forge", forge, "--sha", "abcdef1234", "--post"], capture_output=True, text=True, env=env)  # fmt: skip
+    text = log.read_text() if log.exists() else ""
+    assert done.returncode == 0, done.stderr
+    assert "s3cret-token" not in done.stdout + done.stderr + text
+    return text, json.loads(state.read_text())
+
+
+def _marked(num, marker, state="open"):
+    return {"number": num, "state": state, "body": f"<!-- {marker} -->\nx"}
+
+
+def test_the_first_nightly_run_files_no_cluster_issue_but_records_the_baseline(tmp_path):
+    log, state = _nightly(tmp_path, [_cl("aa", 90), _cl("bb", 80)])
+    assert log.count("gh api -X POST repos/o/r/issues ") == 1 and "title=Deslop nightly" in log
+    assert "labels[]=tracking" in log and "needs-triage" not in log
+    assert "Baseline recorded: 2 clusters" in log and set(state["clusters"]) == {"aa", "bb"}
+
+
+def test_three_new_clusters_out_of_five_file_three_issues_largest_first(tmp_path):
+    cl = [_cl("c1", 10), _cl("c2", 50), _cl("c3", 40), _cl("c4", 30), _cl("old", 99)]
+    log, state = _nightly(tmp_path, cl, prev={"old": "nearly_identical"})
+    titles = [ln for ln in log.splitlines() if "title=Duplicate code" in ln]
+    assert [t.split("cluster ")[1][:2] for t in titles] == ["c2", "c3", "c4"]
+    assert (
+        all("labels[]=needs-triage" in t for t in titles) and "<!-- deslop-cluster: c2 -->" in log
+    )
+    assert "c1.py" not in log and len(state["runs"]) == 1
+
+
+def test_a_cluster_with_an_issue_open_or_closed_by_a_person_is_not_filed_again(tmp_path):
+    listed = json.dumps(
+        [_marked(4, "deslop-cluster: c1"), _marked(5, "deslop-cluster: c2", "closed")]
+    )
+    log, _ = _nightly(tmp_path, [_cl("c1", 9), _cl("c2", 8), _cl("c3", 7), _cl("old", 1)],
+        prev={"old": "identical"}, listed=listed)  # fmt: skip
+    assert log.count("title=Duplicate code") == 1 and "cluster c3" in log
+
+
+def test_a_gone_cluster_is_commented_and_closed_and_the_standing_issue_is_edited(tmp_path):
+    listed = json.dumps([_marked(4, "deslop-cluster: dead"), _marked(9, "deslop-nightly")])
+    log, state = _nightly(
+        tmp_path, [_cl("old", 5)], prev={"old": "identical", "dead": "identical"}, listed=listed
+    )
+    assert "gh api -X POST repos/o/r/issues/4/comments" in log and "Gone in abcdef1." in log
+    assert "gh api -X PATCH repos/o/r/issues/4 -f state=closed" in log
+    assert (
+        "gh api -X PATCH repos/o/r/issues/9 -F body=@-" in log and "title=Deslop nightly" not in log
+    )
+    assert set(state["clusters"]) == {"old"}
+
+
+def test_a_night_without_embeddings_does_not_close_behavioural_clusters(tmp_path):
+    prev = {"bee": "same_behavior"}
+    log, state = _nightly(
+        tmp_path, [_cl("old", 5)], prev=prev, listed=json.dumps([_marked(4, "deslop-cluster: bee")])
+    )
+    assert "state=closed" not in log and "bee" in state["clusters"]
+    small = [_cl("s1", 100, "same_behavior"), _cl("s2", 400, "same_behavior")]
+    log, _ = _nightly(tmp_path / "e", small, prev={"x": "identical"}, emb=True)
+    assert log.count("title=Duplicate code") == 1 and "cluster s2" in log
+
+
+def test_on_onedev_issues_carry_the_triage_field_and_close_with_a_comment(tmp_path):
+    listed = json.dumps(
+        [{"id": 31, "state": "Open", "description": "<!-- deslop-cluster: dead -->"}]
+    )
+    log, _ = _nightly(tmp_path, [_cl("new1", 5), _cl("old", 1)], prev={"old": "identical", "dead": "identical"},
+        listed=listed, forge="onedev")  # fmt: skip
+    assert '"fields": {' in log and '"Triage": "needs-triage"' in log and '"projectId": 7' in log
+    assert "/~api/issues/31/state-transitions" in log and '"comment": "Gone in abcdef1."' in log
+    assert "/~api/issues/31/description" not in log and "/~api/issues/" in log
+    assert log.count('"Triage"') == 1  # the standing issue is created without it
+
+
+def test_on_onedev_a_project_without_the_triage_field_still_gets_its_issues(tmp_path, monkeypatch):
+    monkeypatch.setenv("NO_TRIAGE", "1")
+    log, _ = _nightly(
+        tmp_path, [_cl("new1", 5), _cl("old", 1)], prev={"old": "identical"}, forge="onedev"
+    )
+    assert "Duplicate code at new1.py:1" in log and '"Triage"' not in log
+
+
+def test_the_full_scan_has_no_diff_and_asks_for_embeddings_only_when_given_an_address(tmp_path):
+    env = _deslop_release(tmp_path, 0)
+    repo = tmp_path / "repo"
+    shutil.copytree(DESLOP_SCRIPTS, repo / "scripts", ignore=shutil.ignore_patterns("forge"))
+    tar = tmp_path / "rel/v0.40.1/deslop-0.40.1-linux-x64.tar.gz"
+    (repo / "scripts/deslop.pin").write_text(
+        f"version=0.40.1\nsha256={hashlib.sha256(tar.read_bytes()).hexdigest()}\n"
+    )
+    for extra, want in (([], False), (["--embeddings", "http://h:11434"], True)):
+        done = subprocess.run(
+            [str(repo / "scripts/deslop-pr.sh"), "--full", *extra],
+            cwd=repo,
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+        argv = (tmp_path / "argv").read_text()
+        assert done.returncode == 0 and "--diff" not in argv
+        assert ("--embeddings required --embedding-endpoint http://h:11434" in argv) == want
+
+
+@pytest.mark.parametrize("forge", ["github", "onedev"])
+def test_the_nightly_job_runs_the_full_scan_and_files_issues_with_its_own_token(tmp_path, forge):
+    out = render(
+        tmp_path / "p",
+        ["shell"],
+        forge=forge,
+        deslop_embeddings_endpoint="http://ollama.internal:11434",
+    )
+    if forge == "github":
+        wf = yaml.safe_load((out / ".github/workflows/deslop-nightly.yml").read_text())
+        job = wf["jobs"]["deslop-nightly"]
+        assert job["permissions"] == {"contents": "read", "issues": "write"}
+        assert wf["permissions"] == {"contents": "read"} and wf[True]["schedule"]
+        runs = " ".join(s["run"] for s in job["steps"] if "run" in s)
+        assert "deslop-pr.sh --full" in runs and "--forge github" in runs
+        assert "--embeddings" not in runs  # a hosted runner cannot reach the LAN
+    else:
+        ci = (out / ".onedev-buildspec.yml").read_text()
+        assert (
+            "@secret:ONEDEV_ISSUES_TOKEN@" in ci and "0 30 3 * * ?" in ci and "--forge onedev" in ci
+        )
+        assert "--full --embeddings http://ollama.internal:11434" in ci

@@ -1,0 +1,47 @@
+# Every night, scan the whole default branch with Deslop (version and checksum in
+# scripts/deslop.pin) and file at most three issues for the largest new duplicate
+# clusters. The first run only records a baseline. One standing issue, "Deslop
+# nightly", shows the figure and the trend. Start it by hand with workflow_dispatch.
+# This is the only workflow with issues: write, and only on this job.
+name: deslop-nightly
+
+on:
+  schedule:
+    - cron: '30 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deslop-nightly:
+    name: Duplicate code, nightly
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      # Last night's clusters, to tell new from still open and gone. A new key each run;
+      # the newest one for this branch is restored.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .deslop-nightly
+          key: deslop-nightly-{% raw %}${{ github.ref_name }}-${{ github.run_id }}{% endraw %}
+          restore-keys: deslop-nightly-{% raw %}${{ github.ref_name }}{% endraw %}-
+      # Structural only: a GitHub-hosted runner cannot reach a LAN Ollama, so
+      # deslop_embeddings_endpoint is ignored here.
+      - run: scripts/deslop-pr.sh --full
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: {% raw %}${{ !cancelled() }}{% endraw %}
+        with:
+          name: deslop-nightly-report
+          path: .deslop-pr/deslop-report.*
+          if-no-files-found: ignore
+      - run: scripts/deslop-issues.sh --forge github --report .deslop-pr/deslop-report.json --state .deslop-nightly/state.json --sha "$GITHUB_SHA" --post
+        env:
+          GH_TOKEN: {% raw %}${{ github.token }}{% endraw %}

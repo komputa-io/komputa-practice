@@ -115,6 +115,114 @@ jobs:
   retryDelay: 30
   timeout: 3600
 
+# Duplicate code that a pull request adds, found by Deslop (version and checksum
+# in scripts/deslop.pin). It runs on pull requests only, in a job of its own so a
+# missing secret fails this job and not CI. It leaves one comment on the PR and
+# edits it on each push. {% if deslop_fail_over %}It fails the PR above {{ deslop_fail_over }}% of the added lines.{% else %}Warn only: it never fails the PR over a finding.{% endif %}
+# The comment needs one job secret on main, the access token of an account that
+# may comment on pull requests: ONEDEV_COMMENT_TOKEN. Set it once, from your own
+# shell:
+#   {{ vault_command }} <item> | odev secret set ONEDEV_COMMENT_TOKEN
+# The comment goes through curl and the REST API; the token is read from the
+# environment, never from an argument. A failed comment prints a WARNING line
+# and leaves the job green.
+- name: Duplicate code
+  steps:
+  - !CheckoutStep
+    name: Checkout
+    cloneCredential: !DefaultCredential {}
+    withLfs: false
+    withSubmodules: false
+    condition: ALL_PREVIOUS_STEPS_WERE_SUCCESSFUL
+  - !CommandStep
+    name: Deslop
+    runInContainer: true
+    image: {{ images['shell'] }}
+    interpreter: !DefaultInterpreter
+      commands: |
+        set -e
+        apt-get update -qq && apt-get install -y -qq --no-install-recommends curl jq >/dev/null
+        git fetch -q origin main:refs/remotes/origin/main
+        rc=0
+        scripts/deslop-pr.sh origin/main{% if deslop_fail_over %} --fail-over {{ deslop_fail_over }}{% endif %} || rc=$?
+        export ODEV_HOST='@server_url@' ODEV_PROJECT='@project_path@'
+        scripts/deslop-comment.sh --forge onedev --pr '@pull_request_number@' --report .deslop-pr/deslop-report.json --post \
+          || echo 'WARNING deslop: the PR comment was not posted (see the error above)'
+        exit "$rc"
+    envVars:
+    - name: ODEV_TOKEN
+      value: '@secret:ONEDEV_COMMENT_TOKEN@'
+    useTTY: false
+    condition: ALL_PREVIOUS_STEPS_WERE_SUCCESSFUL
+  - !PublishArtifactStep
+    name: Keep the reports
+    sourcePath: .deslop-pr
+    artifacts: deslop-report.*
+    condition: ALWAYS
+  triggers:
+  - !PullRequestUpdateTrigger
+    branches: main
+  retryCondition: never
+  maxRetries: 3
+  retryDelay: 30
+  timeout: 900
+
+# Nightly at 03:30: scan the whole default branch with Deslop and file at most three
+# issues for the largest new duplicate clusters (Triage: needs-triage). The first
+# run only records a baseline. One standing issue, "Deslop nightly", shows the
+# figure and the trend. It needs one job secret on main, the access token of an
+# account that may write issues: ONEDEV_ISSUES_TOKEN. Set it once, from your own
+# shell:
+#   {{ vault_command }} <item> | odev secret set ONEDEV_ISSUES_TOKEN
+# Last night's clusters live in a job cache. The token is read from the environment,
+# never from an argument.{% if deslop_embeddings_endpoint %} Behavioural matches come from Ollama at
+# {{ deslop_embeddings_endpoint }}; the scan fails if it cannot be reached.{% endif %}
+- name: Deslop nightly
+  steps:
+  - !CheckoutStep
+    name: Checkout
+    cloneCredential: !DefaultCredential {}
+    withLfs: false
+    withSubmodules: false
+    condition: ALL_PREVIOUS_STEPS_WERE_SUCCESSFUL
+  - !SetupCacheStep
+    name: Last night's clusters
+    key: deslop-nightly-state
+    loadKeys:
+    - deslop-nightly-state
+    paths:
+    - .deslop-nightly
+    uploadStrategy: UPLOAD_IF_CHANGED
+    changeDetectionExcludes: ''
+    condition: ALL_PREVIOUS_STEPS_WERE_SUCCESSFUL
+  - !CommandStep
+    name: Scan and file
+    runInContainer: true
+    image: {{ images['shell'] }}
+    interpreter: !DefaultInterpreter
+      commands: |
+        set -e
+        apt-get update -qq && apt-get install -y -qq --no-install-recommends curl jq >/dev/null
+        scripts/deslop-pr.sh --full{% if deslop_embeddings_endpoint %} --embeddings {{ deslop_embeddings_endpoint }}{% endif %}
+        export ODEV_HOST='@server_url@' ODEV_PROJECT='@project_path@'
+        scripts/deslop-issues.sh --forge onedev --report .deslop-pr/deslop-report.json --state .deslop-nightly/state.json --sha "$(git rev-parse HEAD)" --post
+    envVars:
+    - name: ODEV_TOKEN
+      value: '@secret:ONEDEV_ISSUES_TOKEN@'
+    useTTY: false
+    condition: ALL_PREVIOUS_STEPS_WERE_SUCCESSFUL
+  - !PublishArtifactStep
+    name: Keep the reports
+    sourcePath: .deslop-pr
+    artifacts: deslop-report.*
+    condition: ALWAYS
+  triggers:
+  - !ScheduleTrigger
+    cronExpression: 0 30 3 * * ?
+  retryCondition: never
+  maxRetries: 0
+  timeout: 1800
+
 # Weekly: refresh dependencies within their ranges and open a PR. Needs two
 # job secrets on main, from an account that can push a branch and open a pull
 # request: ONEDEV_USER (its login) and ONEDEV_TOKEN (its access token). OneDev
@@ -188,7 +296,7 @@ jobs:
         # image has it or docker, and Debian packages it. A failed install only
         # skips the image section, which says so.
         apt-get update -qq && apt-get install -y -qq --no-install-recommends skopeo >/dev/null || true
-        scripts/update-deps.sh --refresh-only --only images
+        scripts/update-deps.sh --refresh-only --only images --only deslop
     useTTY: false
     condition: ALL_PREVIOUS_STEPS_WERE_SUCCESSFUL
   - !CommandStep

@@ -110,6 +110,7 @@ add a check, add its row. When a mistake can no longer happen, drop its rule.
   - Never move, focus or close the operator's windows (for example with
     `hyprctl`). Kill only the processes and displays that you started.
   - Ask the operator before a run that must use their real screen.
+  - Sign every issue or PR comment you post with the line `🤖 Generated with [Claude Code]`. Agents comment under the operator's own forge login, and Sitrep Live reads a comment under that login without the mark as the operator's answer ("You answered"), which nudges the lead.
   - A server or dev tool a worker starts must not open a browser by itself: turn its auto-open off (a hook cannot see inside the program). Set `BROWSER=none` for the worker. `hooks/block-operator-screen.sh` refuses a worker's browser-opening commands and every `claude-in-chrome` tool (issue #69).
 
 ## Size the process to the work

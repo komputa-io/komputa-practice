@@ -1,0 +1,10 @@
+# What the Deslop PR check leaves out. Globs from the repo root.
+[defaults]
+exclude = [
+  ".deslop-pr/**",
+  ".deslop-nightly/**",
+  # Retired work.
+  "archive/**",
+  # A deliberate byte-equal copy; its twin in app/server stays scanned.
+  "app/mod/claude-reporter/hooks/protocol.ts",
+]

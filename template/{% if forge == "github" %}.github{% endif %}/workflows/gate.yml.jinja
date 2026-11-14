@@ -103,3 +103,31 @@ jobs:
       - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - run: scripts/gate.sh --only shell --only local
 {%- endif %}
+
+  # Duplicate code that the PR adds, found by Deslop (version and checksum in
+  # scripts/deslop.pin). One comment on the PR, edited on each push.
+  # {% if deslop_fail_over %}It fails the PR above {{ deslop_fail_over }}% of the added lines.{% else %}Warn only: it never fails the PR over a finding.{% endif %} This is the only
+  # job with pull-requests: write.
+  deslop:
+    name: Duplicate code
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+{{- checkout() }}
+      - run: scripts/deslop-pr.sh "origin/{% raw %}${{ github.base_ref }}{% endraw %}"{% if deslop_fail_over %} --fail-over {{ deslop_fail_over }}{% endif %}
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: {% raw %}${{ !cancelled() }}{% endraw %}
+        with:
+          name: deslop-report
+          path: .deslop-pr/deslop-report.*
+          if-no-files-found: ignore
+      # A fork's token cannot write, so a failed comment does not fail the PR.
+      - run: scripts/deslop-comment.sh --forge github --pr "{% raw %}${{ github.event.pull_request.number }}{% endraw %}" --report .deslop-pr/deslop-report.json --post
+        if: {% raw %}${{ !cancelled() && hashFiles('.deslop-pr/deslop-report.json') != '' }}{% endraw %}
+        continue-on-error: true
+        env:
+          GH_TOKEN: {% raw %}${{ github.token }}{% endraw %}

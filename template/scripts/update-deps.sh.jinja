@@ -7,13 +7,14 @@
 #   scripts/update-deps.sh            refresh, commit to a branch, open a PR
 #   scripts/update-deps.sh --dry-run  refresh and show the diff; commit nothing
 #   scripts/update-deps.sh --refresh-only [--only SECTION ...]
-#                                     refresh only, commit nothing. Sections: {{ (langs + ['images']) | join(', ') }}
+#                                     refresh only, commit nothing. Sections: {{ (langs + ['images', 'deslop']) | join(', ') }}
 #   scripts/update-deps.sh --publish-only
 #                                     commit what a refresh left and open a PR
 # CI uses the last two when no one image holds every toolchain.
 # Never crosses a major version: the ranges cap it, and a new major becomes an
 # issue for a person to read the changelog. Only versions at least seven days
-# old are taken; that holds for container image digests too. Managed by
+# old are taken; that holds for container image digests too (Deslop takes its
+# pin's min_age_days instead). Managed by
 # project-standards.
 set -Eeuo pipefail
 shopt -s inherit_errexit
@@ -25,7 +26,7 @@ die() {
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$root"
-sections=({{ (langs + ['images']) | join(' ') }})
+sections=({{ (langs + ['images', 'deslop']) | join(' ') }})
 usage() {
   printf 'usage: scripts/update-deps.sh [--dry-run | --refresh-only [--only SECTION ...] | --publish-only]\nsections: %s\n' "${sections[*]}" >&2
   exit 2
@@ -241,6 +242,46 @@ if [[ "$step" != publish ]]; then
           say "$where: ${BASH_REMATCH[-1]} is a tag with no digest; a person pins it once"
         fi
       done < <(git grep -nIE "$named" | grep -v '@sha256:' || true)
+    )
+  fi
+  # Deslop, for the PR check: scripts/deslop.pin moves to the newest release in
+  # the same major that is at least min_age_days old (the pin's own line; seven
+  # when it has none), with the checksum from that release's own .sha256 file. A
+  # failed lookup leaves the pin as it is.
+  if [[ -n "${want[deslop]-}" && -f scripts/deslop.pin ]]; then
+    (
+      say() {
+        printf 'update-deps: deslop: %s\n' "$1"
+        printf '%s\n' "$1" >>"$notes"
+      }
+      old=$(sed -n 's/^version=//p' scripts/deslop.pin)
+      days=$(sed -n 's/^min_age_days=//p' scripts/deslop.pin)
+      [[ "$days" =~ ^[0-9]{1,3}$ ]] || days=7
+      cutoff=$(($(date -u +%s) - days * 86400))
+      new=
+      api=https://api.github.com/repos/Nimblesite/Deslop
+      # The API lists newest first; each release has tag_name, draft, prerelease, published_at.
+      if list=$(curl -fsS --max-time 30 "$api/releases?per_page=30" | grep -E '^    "(tag_name|draft|prerelease|published_at)":'); then
+        while read -r tag_line && read -r draft_line && read -r pre_line && read -r at_line; do
+          [[ "$draft_line$pre_line" == *true* ]] && continue
+          tag=$(sed -E 's/.*"v([0-9.]+)".*/\1/' <<<"$tag_line")
+          at=$(date -u -d "$(sed -E 's/.*"([^"]+)",?$/\1/' <<<"$at_line")" +%s 2>/dev/null) || continue
+          [[ "$tag" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && "${tag%%.*}" == "${old%%.*}" ]] || continue
+          ((at <= cutoff)) || continue
+          [[ "$(printf '%s\n%s\n' "$old" "$tag" | sort -V | tail -n 1)" == "$tag" ]] && new=$tag
+          break
+        done <<<"$list"
+      fi
+      if [[ -z "$new" || "$new" == "$old" ]]; then
+        exit 0
+      fi
+      sum=$(curl -fsSL --max-time 30 "https://github.com/Nimblesite/Deslop/releases/download/v$new/deslop-$new-linux-x64.tar.gz.sha256" | cut -d' ' -f1) || sum=
+      if [[ ! "$sum" =~ ^[0-9a-f]{64}$ ]]; then
+        say "Deslop stays at $old: no checksum for $new"
+        exit 0
+      fi
+      sed -i -e "s/^version=.*/version=$new/" -e "s/^sha256=.*/sha256=$sum/" scripts/deslop.pin
+      say "Deslop moves from $old to $new"
     )
   fi
   if [[ "$step" == refresh ]]; then

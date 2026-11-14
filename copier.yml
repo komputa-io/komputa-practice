@@ -26,6 +26,8 @@ _skip_if_exists:
   - pyproject.toml
   - deny.toml
   - rust-toolchain.toml
+  - .deslop.toml
+  - scripts/deslop.pin
 _tasks:
   # A new project gets a git repo; an existing one keeps its own.
   - command: git rev-parse --git-dir >/dev/null 2>&1 || git init -q -b main
@@ -269,6 +271,26 @@ gate_full_budget:
   help: The most seconds a section may take in the full gate (--full and CI), or 0 for no budget
   default: 0
   validator: "{% if gate_full_budget < 0 %}Give a whole number of seconds, or 0 for none.{% endif %}"
+
+deslop_fail_over:
+  type: str
+  help: >-
+    The percent of a PR's added lines that may be duplicates before the Deslop
+    check fails the PR, for example 10. Empty means warn only: it comments and
+    never fails.
+  default: ""
+  validator: "{% if deslop_fail_over and not (deslop_fail_over | string | regex_search('^(100|[0-9]{1,2})([.][0-9]+)?$')) %}Give a number from 0 to 100, or leave it empty.{% endif %}"
+
+deslop_embeddings_endpoint:
+  type: str
+  help: >-
+    The address of an Ollama server (with the nomic-embed-text model) for the
+    nightly Deslop scan, for example http://ollama.internal:11434. With it the scan
+    also finds code that does the same job in different words. Empty means off.
+    Used by the OneDev nightly job only: a GitHub-hosted runner cannot reach a
+    LAN address, so the GitHub nightly stays structural.
+  default: ""
+  validator: "{% if deslop_embeddings_endpoint and not (deslop_embeddings_endpoint | regex_search('^https?://[A-Za-z0-9._:-]+(/[A-Za-z0-9._/-]*)?$')) %}Give an http or https address, or leave it empty.{% endif %}"
 
 test_folders:
   type: yaml

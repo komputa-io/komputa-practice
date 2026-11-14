@@ -1,0 +1,21 @@
+# What Deslop's PR check leaves out (scripts/deslop-pr.sh). Patterns are globs
+# from the repo root, with gitignore rules. Seeded once; the repo owns it.
+[defaults]
+exclude = [
+  # Its own reports and diff.
+  ".deslop-pr/**",
+  ".deslop-nightly/**",
+  # Vendored code and build output: never ours to refactor.
+  "**/vendor/**",
+  "**/node_modules/**",
+  "**/dist/**",
+  "**/bin/**",
+  "**/obj/**",
+  # Lock files and generated sources.
+  "**/*.lock",
+  "**/package-lock.json",
+  "**/*.g.cs",
+  "**/*.generated.*",
+]
+# Generated code still shows when hand-written code copies it.
+# report_hide = ["**/Migrations/**"]

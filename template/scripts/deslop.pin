@@ -1,0 +1,11 @@
+# The Deslop release that scripts/deslop-pr.sh installs, and the SHA-256 of its
+# linux-x64 tarball (the release's own .sha256 file). scripts/update-deps.sh moves
+# both to the newest release whose age is at least min_age_days. Deslop is exempt
+# from the usual seven days (0 here): the operator decided on 2026-11-14 to take
+# each release at once, to help its author test fixes the practice reported. The
+# checksum is still checked. Set min_age_days=7 to go back to the house rule.
+# Seeded once; the repo owns it.
+version=0.42.0
+# pragma: allowlist nextline secret
+sha256=a06b7f63bfe65e3904e4344f8082a3b9f5ad0dffebd9c23654547d1bbf620364
+min_age_days=0
