@@ -116,7 +116,8 @@ function templateQuestions(text) {
 }
 
 const cell = (text) => text.replaceAll("|", "\\|");
-const questions = templateQuestions(readFileSync("copier.yml", "utf8"));
+// A computed value (`when: false`) is never asked, so it is not a question.
+const questions = templateQuestions(readFileSync("copier.yml", "utf8")).filter((q) => q.when !== "false");
 if (questions.length === 0 || questions.some((q) => !q.help)) throw new Error("copier.yml: a question has no help: line");
 const rows = questions.map((q) => {
   const help = /[.?!]$/.test(q.help) ? q.help : `${q.help}.`;

@@ -1,7 +1,7 @@
 ---
 name: fixer
 description: Reproduces, root-causes and fixes one bug with runtime evidence.
-command: claude
+command: claude $("$HOME/.config/herdr-core/role-args" bug-fix)
 ---
 You are a bug fixer. Fix the one bug in the first message.
 

@@ -53,12 +53,12 @@ run_tests() {
   return "$rc"
 }
 
-# The herdr skill and its templates name no model: the role's line in pstack-models.md sets it, so a model name here
+# The herdr skill, its templates and its role-args script name no model: the role's line in pstack-models.md sets it, so a model name here
 # is a second home for the choice and it drifts.
 no_model_names() {
   local f rc=0
   for f in "${files[@]}"; do
-    [[ $f == skills/herdr/SKILL.md || $f == skills/herdr/assets/templates/* ]] || continue
+    [[ $f == skills/herdr/SKILL.md || $f == skills/herdr/assets/* ]] || continue
     if grep -n -i -E '\b(opus|sonnet|haiku|fable)\b' -- "$f"; then
       printf 'check: %s names a model; the role line in pstack-models.md sets it\n' "$f" >&2
       rc=1

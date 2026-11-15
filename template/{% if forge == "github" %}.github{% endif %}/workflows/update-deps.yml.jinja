@@ -55,7 +55,7 @@
           name: {{ job }}
           path: out
 {%- endmacro -%}
-# Every Monday, refresh the dependencies within their ranges and open a PR, as
+# Every {{ ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'][weekly_day] }} at {{ '%02d:%02d' | format(weekly_hour, weekly_minute) }} UTC, refresh the dependencies within their ranges and open a PR, as
 # the OneDev build spec does. Start it by hand with workflow_dispatch. The refresh
 # jobs run in the gate's images and write no secret but the read-only package
 # logins; the last job has the write token. It needs the repository setting
@@ -66,13 +66,13 @@ name: update-deps
 
 on:
   schedule:
-    - cron: '0 4 * * 1'
+    - cron: '{{ weekly_minute }} {{ weekly_hour }} * * {{ (weekly_day + 1) % 7 }}'
   workflow_dispatch:
 
 permissions:
   contents: read
 
-# One run at a time, so a manual run beside the Monday run does not fail on push.
+# One run at a time, so a manual run beside the weekly run does not fail on push.
 # A run in progress is never cancelled; the next waits.
 concurrency:
   group: update-deps

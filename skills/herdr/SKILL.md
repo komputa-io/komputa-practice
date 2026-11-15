@@ -26,8 +26,8 @@ Size the brief to finish under about 200k context: about two deliverables, or th
 
 Start the worker with `hc run`, as the publisher's guide says.
 
-- A template worker runs on the default model in `~/.claude/settings.json`. There is no `~/.claude/pstack-models.md` since the reset of 10 November 2026. This skill and the templates name no model, and `scripts/check.sh` fails when one does.
-- **Moving up.** Run a worker on a stronger model only in one of the two cases that `rules/working-rules.md` allows: `feature: <reason>` or `fix-rounds: <n> failed on <check>`. Say in your reply which worker you moved up and why.
+- A template worker takes its model from the sheet, `~/.claude/pstack-models.md`. Each template's `command:` runs `role-args` with its role line (`feature`, `bug-fix`, `judgment and prose`), which prints `--model <m> [--effort <e>]` for `claude`. With no sheet or no such line it prints nothing on stdout, says so on stderr, and `claude` runs on the `model` in `~/.claude/settings.json`. This skill and the templates name no model, and `scripts/check.sh` fails when one does. Never pin a model into an installed template.
+- **Moving up.** Run a worker on a stronger model only in one of the two cases that `rules/working-rules.md` allows: `feature: <reason>` or `fix-rounds: <n> failed on <check>`. Say in your reply which worker you moved up and why. To do it, start the template with a `model` label: `hc run owner --label 'model=<model> @<effort>' "<task>"` (the effort is optional). `role-args` reads the label from `hc get` and uses it in place of the sheet. The labels `model=` and `role=verifier` need `jq` on the PATH; without it `role-args` warns on stderr and uses the sheet.
 - **Tests follow risk.** A brief for an `owner` or `implementer` names the PR's risks, or says `Risks: none`. The worker tests the domain rules, the happy path and one failure case for each risk that ranks high, and adds no more test lines than source lines (`rules/working-rules.md`, "Tests follow risk"). No script checks the brief: the lead reads the report's line counts and the diff.
 - **No test is deleted to get green.** `hooks/block-test-weakening.sh` refuses it in a worker, once it is registered in `~/.claude/settings.json`; since the reset it is not, so the brief carries the rule. To prune a suite in a reviewed PR, start the pruning worker with `hc run --label test-prune=1` and name it in the brief; follow "Never delete or weaken a test to get green" in `rules/working-rules.md`.
 - The two worker hooks (`hooks/block-operator-screen.sh` and `hooks/block-test-weakening.sh`) act only in a worker: an `hc` terminal started from a template or by a parent, as `hc get` on its own address shows. Your own session has neither, so they leave it alone. They act only once they are registered in `~/.claude/settings.json`; since the reset of 10 November 2026 neither is. A template's `command:` runs through `sh -c`, so a variable such as `BROWSER=none` goes in front of the command there.
@@ -94,16 +94,22 @@ To give new workers a variable, set it in the user manager first, then restart t
 
 ## Templates
 
-The templates are `assets/templates/*.md`. Each one's `command` is plain `claude`: the model comes from the role's line (see "Start a worker"). Install or update them:
+The templates are `assets/templates/*.md`. Each one's `command` is `claude $("$HOME/.config/herdr-core/role-args" <role line>)`: the model comes from the role's line (see "Start a worker"). Install or update the templates and the script together:
 
 ```sh
-mkdir -p ~/.config/herdr-core/templates && cp assets/templates/*.md ~/.config/herdr-core/templates/
+mkdir -p ~/.config/herdr-core/templates && cp assets/templates/*.md ~/.config/herdr-core/templates/ \
+  && install -m 755 assets/role-args.sh ~/.config/herdr-core/role-args \
+  && install -m 755 assets/operator-run.sh ~/.config/herdr-core/operator-run
 ```
+
+`role-args` sits in `~/.config/herdr-core/`, so a template finds it from any worktree and any folder. `scripts/tests/role-args.test.sh` tests it.
+
+`operator-run '<command>'` is for a command the operator must run. It opens a pane under the calling agent's own pane (found from `HC_TERMINAL_ID`) that shows the command, waits for Enter, runs it and leaves a shell. The command goes to the pane as one argv element, so quotes, `$` and `;` survive and nothing runs before Enter. It exits 1 with one stderr line when `HC_TERMINAL_ID` is unset, `herdr-app` or `jq` is missing, or the pane is not found; then give the command in a fenced code block. Never put a secret in the command. `scripts/tests/operator-run.test.sh` tests it with a stub `herdr-app`.
 
 - `owner`: one PR, from build to green CI. It builds a tier 1 or tier 2 PR itself, and runs poteto-mode with its subagents only for tier 3, in a repo that turns pstack on (pstack is off globally since the reset). It pushes its own branch and babysits the PR. It merges only when its brief says so.
 - `implementer`: feature and refactoring work.
 - `fixer`: one bug, reproduced and root-caused.
 - `reviewer`: read-only, findings proven by a run. Use it for adversarial review.
-- `verifier`: the tier 2 verifier agent. It has no template of its own: start `reviewer` with a verifier brief. It runs the acceptance checks live, reads the diff, and checks the tests against "Tests follow risk".
+- `verifier`: the tier 2 verifier agent. It has no template of its own: start `reviewer` with `--label role=verifier` and a verifier brief. `role-args` then tries the `verifier` line before `judgment and prose`. It runs the acceptance checks live, reads the diff, and checks the tests against "Tests follow risk".
 
 `docs/model-selection.md` shows how every agent's model is chosen, and what enforces each part. To move a worker up from its role's model, see "Start a worker".

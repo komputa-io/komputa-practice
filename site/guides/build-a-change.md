@@ -56,7 +56,7 @@ Use this guide for one pull request: a bug fix, a small feature, a refactor or a
 
 - **A hook refuses a command.** The agent sees a line that starts with `BLOCKED:` and says what the hook allows instead. For example, the only forced push allowed is a lease with the exact SHA, on a branch that is not the default. Do not turn the hook off.
 - **The agent wants to delete or skip a test to get green.** The rules forbid it. The fix goes in the code, or in a test that was wrong.
-- **The agent finds other work on the way.** It files that work as a separate issue and keeps the pull request to what you asked for.
+- **The agent finds other work on the way.** It keeps the pull request to what you asked for. A defect a user would hit, or one that costs money, data or trust, gets its own issue; a small finding goes in the repo's standing low-priority issue.
 - **The gate fails on its time budget.** The message names the slowest step. A budget rises only with a reason in `gate_budget_reason` in `.copier-answers.yml`.
 
 ## Next steps

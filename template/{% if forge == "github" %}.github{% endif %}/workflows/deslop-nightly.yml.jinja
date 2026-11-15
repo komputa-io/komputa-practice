@@ -1,4 +1,4 @@
-# Every night, scan the whole default branch with Deslop (version and checksum in
+# Every night at {{ '%02d:%02d' | format(nightly_hour, nightly_minute) }} UTC (schedule_slot {{ schedule_slot }}), scan the whole default branch with Deslop (version and checksum in
 # scripts/deslop.pin) and file at most three issues for the largest new duplicate
 # clusters. The first run only records a baseline. One standing issue, "Deslop
 # nightly", shows the figure and the trend. Start it by hand with workflow_dispatch.
@@ -7,7 +7,7 @@ name: deslop-nightly
 
 on:
   schedule:
-    - cron: '30 3 * * *'
+    - cron: '{{ nightly_minute }} {{ nightly_hour }} * * *'
   workflow_dispatch:
 
 permissions:

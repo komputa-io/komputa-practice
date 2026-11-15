@@ -14,6 +14,7 @@ Each path in the practice repo, and what it holds.
 | `skills/standards-feedback/` | Turns review findings into changes to the house rules, or into a check in the template, so a mistake is fixed where it starts. |
 | `skills/herdr/SKILL.md` | The herdr skill: when to use a worker, how to brief, start, show, wait for, replace and clean up one. |
 | `skills/herdr/assets/templates/` | `hc` worker templates: `owner`, `implementer`, `fixer` and `reviewer`. |
+| `skills/herdr/assets/role-args.sh`, `operator-run.sh` | Installed in `~/.config/herdr-core/`: `role-args` picks a worker's model from the model sheet; `operator-run '<command>'` opens a pane under the agent's own that shows a command, waits for Enter and runs it. |
 | `archive/herdr/` | The scripts, systemd units and tests that ran unattended leads and workers, archived on 10 November 2026. No check covers them. `archive/README.md` has the detail. |
 | `skills/herdr/evals/trigger.json` | Queries that must, and must not, trigger the skill. |
 | `rules/working-rules.md` | Rules to copy into your global `~/.claude/CLAUDE.md`. |

@@ -167,7 +167,7 @@ jobs:
   retryDelay: 30
   timeout: 900
 
-# Nightly at 03:30: scan the whole default branch with Deslop and file at most three
+# Nightly at {{ '%02d:%02d' | format(nightly_hour, nightly_minute) }} (schedule_slot {{ schedule_slot }}): scan the whole default branch with Deslop and file at most three
 # issues for the largest new duplicate clusters (Triage: needs-triage). The first
 # run only records a baseline. One standing issue, "Deslop nightly", shows the
 # figure and the trend. It needs one job secret on main, the access token of an
@@ -218,12 +218,12 @@ jobs:
     condition: ALWAYS
   triggers:
   - !ScheduleTrigger
-    cronExpression: 0 30 3 * * ?
+    cronExpression: 0 {{ nightly_minute }} {{ nightly_hour }} * * ?
   retryCondition: never
   maxRetries: 0
   timeout: 1800
 
-# Weekly: refresh dependencies within their ranges and open a PR. Needs two
+# Weekly, on {{ ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'][weekly_day] }} at {{ '%02d:%02d' | format(weekly_hour, weekly_minute) }}: refresh dependencies within their ranges and open a PR. Needs two
 # job secrets on main, from an account that can push a branch and open a pull
 # request: ONEDEV_USER (its login) and ONEDEV_TOKEN (its access token). OneDev
 # checks the login with the token. Set them once, from your own shell:
@@ -318,7 +318,7 @@ jobs:
 {%- endif %}
   triggers:
   - !ScheduleTrigger
-    cronExpression: 0 0 4 ? * MON
+    cronExpression: 0 {{ weekly_minute }} {{ weekly_hour }} ? * {{ ['MON','TUE','WED','THU','FRI','SAT','SUN'][weekly_day] }}
   retryCondition: never
   maxRetries: 0
   timeout: 3600

@@ -28,7 +28,7 @@ Use this guide for work that needs many pull requests: a new app, a large featur
 
 4. **Let it merge and deploy one pull request at a time.** It deletes each merged branch. Each pull request goes through [Build a change](/guides/build-a-change). The next one starts from the merged result, so each review is small.
 
-5. **For a project in milestones, set the threat model first.** The architecture doc states the threat model and the severity scale (impact times likelihood). Each milestone gets one review and one fix round. After that, only a high finding reopens it; the rest go to issues for the next planned work.
+5. **For a project in milestones, set the threat model first.** The architecture doc states the threat model and the severity scale (impact times likelihood). Each milestone gets one review and one fix round. After that, only a high finding reopens it; the rest follow the issue rule: small ones go in the repo's standing low-priority issue.
 
 6. **Hand over before the context fills.** A long session writes a handoff file before its context gets too big. A fresh session starts from the handoff, not from the old conversation. When nobody watches, [the watcher](/explanation/the-watcher) asks for the handoff, starts the fresh session from it, and nudges a session that has gone idle.
 

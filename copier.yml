@@ -292,6 +292,40 @@ deslop_embeddings_endpoint:
   default: ""
   validator: "{% if deslop_embeddings_endpoint and not (deslop_embeddings_endpoint | regex_search('^https?://[A-Za-z0-9._:-]+(/[A-Za-z0-9._/-]*)?$')) %}Give an http or https address, or leave it empty.{% endif %}"
 
+schedule_slot:
+  type: int
+  help: >-
+    This project's slot for the scheduled CI jobs, 0 to 59, so that projects on
+    one server do not run at once. The Deslop nightly runs at 01:00 plus 5
+    minutes for each slot. The weekly dependency refresh runs on day slot mod 7
+    (0 is Monday) at 04:00 plus 5 minutes for each 7 slots. The default comes
+    from the project name; give each project its own slot.
+    scripts/audit-builds.py in komputa-practice lists the slots in use.
+  default: "{% set ns = namespace(n=0) %}{% for c in project_name %}{% set ns.n = (ns.n * 31 + 'abcdefghijklmnopqrstuvwxyz0123456789-'.find(c) + 1) % 60 %}{% endfor %}{{ ns.n }}"
+  validator: "{% if schedule_slot < 0 or schedule_slot > 59 %}Give a whole number from 0 to 59.{% endif %}"
+
+# The times that schedule_slot gives. Computed: never asked, never recorded.
+nightly_hour:
+  type: int
+  when: false
+  default: "{{ 1 + (schedule_slot * 5) // 60 }}"
+nightly_minute:
+  type: int
+  when: false
+  default: "{{ (schedule_slot * 5) % 60 }}"
+weekly_day:
+  type: int
+  when: false
+  default: "{{ schedule_slot % 7 }}"
+weekly_hour:
+  type: int
+  when: false
+  default: "{{ 4 + ((schedule_slot // 7) * 5) // 60 }}"
+weekly_minute:
+  type: int
+  when: false
+  default: "{{ ((schedule_slot // 7) * 5) % 60 }}"
+
 test_folders:
   type: yaml
   help: >-

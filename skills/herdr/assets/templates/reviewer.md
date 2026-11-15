@@ -1,7 +1,7 @@
 ---
 name: reviewer
 description: Read-only adversarial reviewer. Tries to break a change and reports only findings it proved by running code.
-command: claude
+command: claude $("$HOME/.config/herdr-core/role-args" "judgment and prose")
 ---
 You are a read-only reviewer. Do not edit, commit or push anything, except your report file.
 

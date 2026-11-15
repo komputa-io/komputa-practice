@@ -67,10 +67,15 @@ add a check, add its row. When a mistake can no longer happen, drop its rule.
 | Every check runs on every pull request | `scripts/check.sh`, in CI |
 | A merge needs green checks at the head | Branch protection on `main` requires the `check`, `template` and `docs` jobs |
 | A merged branch is deleted on the forge | The repo setting that deletes head branches on merge |
+| An operator command opens in a pane, not a `!` line | `skills/herdr/assets/operator-run.sh` refuses outside Herdr and is tested by `scripts/tests/operator-run.test.sh`; choosing it is prose |
+| Every project keeps the CI pattern at its own slot | The template gate's shell section fails CI on drift; `scripts/audit-builds.py` lists every project and any shared schedule |
 | A file over 5,000 tokens gets a refactor issue | The template's `scripts/gate.sh --fast` asks for the issue when a staged file passes the cap; opening it is prose |
 
 ## Rules
 
+- When the operator must run a command, do not suggest a `!` line. In Herdr (`HC_TERMINAL_ID` is set), run
+  `~/.config/herdr-core/operator-run '<command>'`: it opens a pane under yours that shows the command, waits for
+  Enter, runs it and leaves a shell. Never put a secret in it. Outside Herdr, give the command in a fenced code block.
 - Your own question about what the work should do does not stop the work.
   Settle it by running something when a run can answer it. Otherwise apply
   a sensible default, record it, carry on, and report it to the operator
@@ -200,11 +205,19 @@ exist, in a reviewed pull request whose text lists what goes, so that the operat
 
 ## Build work
 
+- Every project holds the template's CI pattern: Deslop on each pull request,
+  the Deslop nightly and the weekly dependency refresh, at its own
+  `schedule_slot`. Give a new project a free slot (`scripts/audit-builds.py`
+  lists them), so that no two projects on one server run at once.
 - A file over 5,000 tokens (bytes / 4) is allowed. When the gate says a
   staged file is over the cap, open a refactor issue on the forge at high
   priority (OneDev `Priority=Major`, GitHub label `priority: high`), unless
   one is open for that file. The issue names the file and its size, and asks
   for the split: one module for each concern, and tests in their own file.
+- File an issue only for a defect outside the current PR's scope that a user would hit, or that costs money, data or
+  trust. Fix what is inside the scope in the PR. Put small findings in the repo's standing low-priority issue, one
+  comment per review. Search the repo's open issues before filing; comment on a match instead.
+  A Critical defect on the operator's own project is fixed at once, as its own PR. Everything else waits for planned work.
 - Code that parses input from a stranger (mail, a file from outside, a request with no sign-in) gets one table
   test of bad input for each parser: a few rows, for the kinds that the threat model ranks high. Input from the
   signed-in operator needs only the test of its validation. Do not test each key, and do not run a fuzz campaign.
@@ -212,7 +225,7 @@ exist, in a reviewed pull request whose text lists what goes, so that the operat
 - A project built in milestones states its threat model and severity scale
   (impact times likelihood) in its architecture doc, and gives each
   milestone one review and one fix round. After that, only a high finding
-  reopens it. Put other findings in issues for the next planned work.
+  reopens it. Other findings follow the issue rule above.
 - Stacked PRs restack the way pstack's merge-safety reference says: push the
   agent's own branch with a lease that names the branch and the literal SHA
   it replaces (`--force-with-lease=refs/heads/<branch>:<sha>`). The git hook

@@ -1,7 +1,7 @@
 ---
 name: implementer
 description: Writes one scoped code change in its own worktree. Feature and refactoring work.
-command: claude
+command: claude $("$HOME/.config/herdr-core/role-args" feature)
 ---
 You are an implementer. Do exactly the task in the first message.
 

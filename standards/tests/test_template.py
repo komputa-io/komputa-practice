@@ -1385,7 +1385,7 @@ def test_the_github_refresh_runs_one_at_a_time_and_never_cancels_a_running_one(t
 def test_the_github_refresh_runs_weekly_in_the_gate_images_and_only_the_last_job_writes(
     tmp_path, languages
 ):
-    out = render(tmp_path / "p", languages, forge="github")
+    out = render(tmp_path / "p", languages, forge="github", schedule_slot=0)
     wf = yaml.safe_load((out / ".github/workflows/update-deps.yml").read_text())
     gate = yaml.safe_load((out / ".github/workflows/gate.yml").read_text())["jobs"]
     assert wf[True]["schedule"] == [{"cron": "0 4 * * 1"}] and "workflow_dispatch" in wf[True]
@@ -2100,6 +2100,7 @@ def test_the_nightly_job_runs_the_full_scan_and_files_issues_with_its_own_token(
         ["shell"],
         forge=forge,
         deslop_embeddings_endpoint="http://ollama.internal:11434",
+        schedule_slot=30,
     )
     if forge == "github":
         wf = yaml.safe_load((out / ".github/workflows/deslop-nightly.yml").read_text())
@@ -2115,3 +2116,64 @@ def test_the_nightly_job_runs_the_full_scan_and_files_issues_with_its_own_token(
             "@secret:ONEDEV_ISSUES_TOKEN@" in ci and "0 30 3 * * ?" in ci and "--forge onedev" in ci
         )
         assert "--full --embeddings http://ollama.internal:11434" in ci
+
+
+# (s) Each project's scheduled jobs at its own slot, and the gate holds the pattern.
+
+
+@pytest.mark.parametrize(
+    ("slot", "nightly", "weekly"),
+    [(0, (0, 1), (0, 4, "MON")), (13, (5, 2), (5, 4, "SUN")), (59, (55, 5), (40, 4, "THU"))],
+)
+def test_each_slot_gives_its_own_nightly_and_weekly_time(tmp_path, slot, nightly, weekly):
+    (nm, nh), (wm, wh, day) = nightly, weekly
+    onedev = render(tmp_path / "o", ["shell"], forge="onedev", schedule_slot=slot)
+    spec = (onedev / ".onedev-buildspec.yml").read_text()
+    assert f"cronExpression: 0 {nm} {nh} * * ?" in spec
+    assert f"cronExpression: 0 {wm} {wh} ? * {day}" in spec
+    github = render(tmp_path / "g", ["shell"], forge="github", schedule_slot=slot)
+    flows = github / ".github/workflows"
+    dow = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"].index(day)
+    assert yaml.safe_load((flows / "deslop-nightly.yml").read_text())[True]["schedule"] == [
+        {"cron": f"{nm} {nh} * * *"}
+    ]
+    assert yaml.safe_load((flows / "update-deps.yml").read_text())[True]["schedule"] == [
+        {"cron": f"{wm} {wh} * * {dow}"}
+    ]
+
+
+def test_the_default_slot_comes_from_the_project_name(tmp_path):
+    slots = {
+        name: yaml.safe_load(
+            (
+                render(tmp_path / name, ["shell"], project_name=name) / ".copier-answers.yml"
+            ).read_text()
+        )["schedule_slot"]
+        for name in ("tend", "garmin-core")
+    }
+    assert all(0 <= s <= 59 for s in slots.values()) and len(set(slots.values())) == 2
+
+
+@pytest.mark.parametrize(
+    ("forge", "drift"),
+    [
+        ("onedev", "drop the nightly"),
+        ("onedev", "move the refresh"),
+        ("github", "drop the refresh"),
+    ],
+)
+def test_the_full_gate_fails_when_the_ci_pattern_drifts(tmp_path, forge, drift):
+    out = render(tmp_path / "p", ["shell"], forge=forge, schedule_slot=13)
+    _repo(out)
+    git(out, "add", "-A")
+    assert run_gate(out, "--only", "shell").returncode == 0
+    spec = out / ".onedev-buildspec.yml"
+    if drift == "drop the nightly":
+        spec.write_text(spec.read_text().replace("- name: Deslop nightly", "- name: Scan"))
+    elif drift == "move the refresh":
+        spec.write_text(spec.read_text().replace("0 5 4 ? * SUN", "0 0 4 ? * MON"))
+    else:
+        (out / ".github/workflows/update-deps.yml").unlink()
+    gate = run_gate(out, "--only", "shell")
+    assert gate.returncode == 1, gate.stdout + gate.stderr
+    assert "as the template seeds it (schedule_slot 13)" in gate.stderr
