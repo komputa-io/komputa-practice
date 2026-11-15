@@ -24,7 +24,7 @@ Use this guide when a session must keep working while nobody watches it, for exa
    watcher/watcherctl enable             # a pass every 5 minutes, now and after each login
    ```
 
-2. **Put the session on the watch.** This also marks it the lead (`lead=1`). Run it from inside the session's own `hc` terminal, or name the terminal:
+2. **Check the session is on the watch.** Each pass puts every top-level agent session in `hc` on the watch by itself and marks it the lead (`lead=1`), unless it is labelled `watch=off`. To put one back after `off`, run this from inside its own `hc` terminal, or name the terminal:
 
    ```sh
    ~/Code/komputa-practice/watcher/practice-watch on       # or: ... on t7

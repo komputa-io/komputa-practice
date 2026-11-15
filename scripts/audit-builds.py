@@ -8,7 +8,8 @@ request, the Deslop nightly and the weekly dependency refresh, at its own
 schedule_slot (copier.yml), so that projects on one server do not run at once.
 It prints one line for each project: its template version, its slot, which of
 the three it holds, and its two schedules. Then it names each pair of projects
-that share a schedule, and the lowest free slots.
+that share a schedule, and the lowest free slots. A project whose description
+starts with [ARCHIVED is named once and not checked.
 
 Read only. It lists OneDev projects with odev, and reads each default branch
 with a shallow, blob-less clone into a temporary folder that it removes; git
@@ -27,7 +28,7 @@ import subprocess
 import sys
 import tempfile
 from collections import defaultdict
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 JOBS = ("Duplicate code", "Deslop nightly", "Update dependencies")
@@ -40,6 +41,7 @@ class Project:
     slot: str
     held: tuple[str, ...]
     schedules: dict[str, str] = field(default_factory=dict)
+    archived: bool = False
 
     @property
     def conforms(self) -> bool:
@@ -58,6 +60,11 @@ def answers(text: str) -> tuple[str, str]:
 
 def onedev_project(spec: str, copier: str, name: str) -> Project:
     """A project from its build spec: each job's block runs to the next `- name:`."""
+    # A spec may indent its jobs list; read it as if each job started the line.
+    lead = re.search(r"^( *)- name: ", spec, re.MULTILINE)
+    if lead and lead.group(1):
+        cut = lead.group(1)
+        spec = "\n".join(line.removeprefix(cut) for line in spec.split("\n"))
     blocks = dict(re.findall(r"^- name: (.+)\n((?:(?!- name: ).*\n?)*)", spec, re.MULTILINE))
     held, schedules = [], {}
     for job in JOBS:
@@ -72,12 +79,9 @@ def onedev_project(spec: str, copier: str, name: str) -> Project:
 
 
 def onedev(host: str) -> list[Project]:
-    paths = [
-        p["path"]
-        for p in json.loads(
-            run("odev", "project", "list", "--host", host, "--limit", "1000", "--json")
-        )
-    ]
+    listed = json.loads(run("odev", "project", "list", "--host", host, "--limit", "1000", "--json"))
+    archived = {p["path"] for p in listed if (p.get("description") or "").startswith("[ARCHIVED")}
+    paths = [p["path"] for p in listed]
     found = []
     with tempfile.TemporaryDirectory() as tmp:
         for path in paths:
@@ -104,9 +108,10 @@ def onedev(host: str) -> list[Project]:
                 )
                 return done.stdout if done.returncode == 0 else ""
 
-            found.append(
-                onedev_project(show(".onedev-buildspec.yml"), show(".copier-answers.yml"), path)
+            project = onedev_project(
+                show(".onedev-buildspec.yml"), show(".copier-answers.yml"), path
             )
+            found.append(replace(project, archived=path in archived))
     return found
 
 
@@ -154,7 +159,17 @@ def github(owner: str) -> list[Project]:
     return found
 
 
-def report(projects: list[Project]) -> int:
+def slot_of(p: Project) -> int | None:
+    """The slot from the answers file, else from the nightly's time (01:00 plus 5 minutes a slot)."""
+    if p.slot.isdigit():
+        return int(p.slot)
+    cron = re.match(r"0 (\d+) (\d+) ", p.schedules.get("Deslop nightly", ""))
+    return (int(cron.group(2)) - 1) * 12 + int(cron.group(1)) // 5 if cron else None
+
+
+def report(everything: list[Project]) -> int:
+    projects = [p for p in everything if not p.archived]
+    gone = sorted(p.name for p in everything if p.archived)
     for p in sorted(projects, key=lambda p: p.name):
         missing = [j for j in JOBS if j not in p.held]
         state = "ok" if p.conforms else "MISSING " + ", ".join(missing or ["the template"])
@@ -167,7 +182,9 @@ def report(projects: list[Project]) -> int:
     clashes = {k: v for k, v in shared.items() if len(v) > 1}
     for (job, cron), names in sorted(clashes.items()):
         print(f"SHARED {job} at '{cron}': {', '.join(sorted(names))}")
-    used = {int(p.slot) for p in projects if p.slot.isdigit()}
+    if gone:
+        print(f"archived, not checked ({len(gone)}): {', '.join(gone)}")
+    used = {s for p in projects if (s := slot_of(p)) is not None}
     print("free slots:", ", ".join(str(s) for s in range(60) if s not in used)[:80])
     return 0 if all(p.conforms for p in projects) and not clashes else 1
 

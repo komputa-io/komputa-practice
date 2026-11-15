@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 # The practice's one watcher: keeps a long agent session going while nobody watches it, for example overnight.
 # A session joins by a label on its own hc terminal, so the watcher keeps no files of its own. The user timer that
-# watcher/watcherctl installs runs `practice-watch pass --apply` every 5 minutes.
+# watcher/watcherctl installs runs `practice-watch pass --apply` every 5 minutes. Each pass first puts every live
+# top-level agent session (claude or codex, with no parent) that carries no watch label on the watch as the lead, as
+# `on` does; a session opts out with the label watch=off. A worker (it has a parent) and an old session are left out.
 #   practice-watch on [TERMINAL]       watch it (label watch=on) and mark it the lead (lead=1); resets its nudge count
 #                                      and handoff request, and unmarks it old. Default: $HC_TERMINAL_ID
 #   practice-watch waits [TERMINAL]    it waits for the operator (watch=waits): no nudges until `on` again
-#   practice-watch off [TERMINAL]      stop watching it (removes the watch labels); it stays the lead
+#   practice-watch off [TERMINAL]      stop watching it (watch=off, so a pass does not watch it again); it stays the lead
 #   practice-watch status              each watched terminal, its state and its nudge count
 #   practice-watch handover FILE [TERMINAL] [--apply]
 #                                      start a fresh session that continues from handoff FILE, in the same folder,
@@ -19,7 +21,7 @@
 # For each terminal labelled watch=on, one pass does one of these:
 #   - working, or idle or done for less than WATCH_QUIET_MIN minutes (default 30): nothing;
 #   - idle or done for longer: a nudge (hc send) that says carry on, take the default on a reversible question, or
-#     label itself watch=waits or watch= ; at most WATCH_MAX_NUDGES nudges (default 12) until `on` again;
+#     label itself watch=waits or watch=off ; at most WATCH_MAX_NUDGES nudges (default 12) until `on` again;
 #   - blocked on a prompt, out of nudges, or ended: an alert, once for each such state.
 # Then each old session (watch.old=1) that has been idle or done for WATCH_CLOSE_H hours (default 3) is closed
 # (hc kill and hc rm, which closes its pane), unless it is on the watch or the lead again, or a live terminal it started
@@ -93,7 +95,7 @@ decide() {
 }
 
 nudge_text() { # nudge_text ADDRESS MINUTES N
-  printf '%s' "[practice-watch] This session has been idle for $2 minutes, and it is on the watch for unattended work (nudge $3 of $max_nudges). If work remains, carry on with the plan: take the default on any reversible question and say which one you took. If only the operator can decide what comes next, say why and run: hc label $1 watch=waits. If the work is finished, run: hc label $1 watch="
+  printf '%s' "[practice-watch] This session has been idle for $2 minutes, and it is on the watch for unattended work (nudge $3 of $max_nudges). If work remains, carry on with the plan: take the default on any reversible question and say which one you took. If only the operator can decide what comes next, say why and run: hc label $1 watch=waits. If the work is finished, run: hc label $1 watch=off"
 }
 
 # context_k ADDRESS: the context in thousands of tokens, from the status line on its screen; nothing if none shows.
@@ -200,6 +202,25 @@ close_old() {
   done
 }
 
+# adopt APPLY: put each live top-level agent session with no watch label on the watch as the lead, as `on` does. A session
+# labelled watch=off (or waits) keeps its label; an old one (watch.old=1) is closing; a worker ends with its parent.
+adopt() {
+  local apply=$1 live addr info
+  live=$("${hcc[@]}" ls --json) || return 0
+  for addr in $(jq -r '.terminals[].address' <<<"$live"); do
+    info=$("${hcc[@]}" get "$addr" --json) || continue
+    jq -e '.state == "live" and (.parent // "") == "" and (.labels.watch // "") == "" and (.labels["watch.old"] // "") == ""
+      and ((.foreground.argv[0] // "") | split("/") | last | IN("claude", "codex"))' <<<"$info" >/dev/null || continue
+    if ((! apply)); then
+      printf 'practice-watch: %s: would watch it as the lead (a top-level agent session with no watch label)\n' "$addr"
+    elif "${hcc[@]}" label "$addr" watch=on watch.nudges=0 watch.alerted= watch.handoff= lead=1 >/dev/null; then
+      printf 'practice-watch: %s: now watched and the lead (to opt out: hc label %s watch=off)\n' "$addr" "$addr"
+    else
+      printf 'practice-watch: %s: the watch label was not set; the next pass tries again\n' "$addr" >&2
+    fi
+  done
+}
+
 pass() {
   local apply=$1 list addr info action n mins key text k
   list=$("${hcc[@]}" ls --all --label watch=on --json) || {
@@ -279,7 +300,7 @@ case $cmd in
   off)
     (($# <= 1)) || usage
     t=$(terminal "${1-}")
-    "${hcc[@]}" label "$t" watch= watch.nudges= watch.alerted= watch.handoff= >/dev/null
+    "${hcc[@]}" label "$t" watch=off watch.nudges= watch.alerted= watch.handoff= >/dev/null
     printf 'practice-watch: no longer watching %s\n' "$t"
     ;;
   status)
@@ -310,6 +331,7 @@ case $cmd in
       printf 'practice-watch: another pass holds %s\n' "$lock"
       exit 0
     }
+    adopt "$apply"
     pass "$apply"
     close_old "$apply"
     ((apply)) || printf 'practice-watch: dry run; to apply: practice-watch pass --apply\n'

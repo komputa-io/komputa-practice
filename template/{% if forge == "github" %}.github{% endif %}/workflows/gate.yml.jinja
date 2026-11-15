@@ -106,8 +106,9 @@ jobs:
 
   # Duplicate code that the PR adds, found by Deslop (version and checksum in
   # scripts/deslop.pin). One comment on the PR, edited on each push.
-  # {% if deslop_fail_over %}It fails the PR above {{ deslop_fail_over }}% of the added lines.{% else %}Warn only: it never fails the PR over a finding.{% endif %} This is the only
-  # job with pull-requests: write.
+  # {% if deslop_fail_over %}It fails the PR above {{ deslop_fail_over }}% of the added lines.{% endif %} It fails while a duplicate the PR
+  # adds has no decision: fixed, or kept in .deslop-decisions
+  # (scripts/deslop-decisions.sh). This is the only job with pull-requests: write.
   deslop:
     name: Duplicate code
     if: github.event_name == 'pull_request'
@@ -131,3 +132,4 @@ jobs:
         continue-on-error: true
         env:
           GH_TOKEN: {% raw %}${{ github.token }}{% endraw %}
+      - run: scripts/deslop-decisions.sh --report .deslop-pr/deslop-report.json

@@ -630,6 +630,7 @@ if [[ -n "${want[shell]-}" ]]; then
     job_block() { awk -v want="- name: $1" '/^- name: /{on = ($0 == want)} on' "$spec"; }
     pattern=(
       'Duplicate code|PullRequestUpdateTrigger'
+      'Duplicate code|scripts/deslop-decisions\.sh'
       'Deslop nightly|cronExpression: 0 {{ nightly_minute }} {{ nightly_hour }} \* \* \?'
       "Update dependencies|cronExpression: 0 {{ weekly_minute }} {{ weekly_hour }} \? \* {{ ['MON','TUE','WED','THU','FRI','SAT','SUN'][weekly_day] }}"
     )
@@ -645,6 +646,7 @@ if [[ -n "${want[shell]-}" ]]; then
     flows=.github/workflows
     pattern=(
       "$flows/gate.yml|scripts/deslop-pr\.sh"
+      "$flows/gate.yml|scripts/deslop-decisions\.sh"
       "$flows/deslop-nightly.yml|cron: '{{ nightly_minute }} {{ nightly_hour }} \* \* \*'"
       "$flows/update-deps.yml|cron: '{{ weekly_minute }} {{ weekly_hour }} \* \* {{ (weekly_day + 1) % 7 }}'"
     )

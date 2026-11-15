@@ -154,7 +154,25 @@ ok "on watches, resets the counts and marks the lead" logged '^label t7 watch=on
 watch waits t7
 ok "waits stops the nudges" logged '^label t7 watch=waits$'
 watch off t7
-ok "off removes the watch labels and keeps the lead" logged '^label t7 watch= watch.nudges= watch.alerted= watch.handoff=$'
+ok "off sets watch=off, so a pass does not watch it again, and keeps the lead" logged '^label t7 watch=off watch.nudges= watch.alerted= watch.handoff=$'
+
+# A pass watches each live top-level agent session that has no watch label, as the lead. One that opted out (watch=off), a
+# worker (it has a parent), a plain shell and an old session are left alone.
+term() { jq -nc --arg a "$1" --arg p "$2" --arg prog "$3" --argjson l "$4" '{address:$a, state:"live", parent:(if $p == "" then null else $p end), foreground:{argv:[$prog, "--x"]}, status:{state:"working"}, labels:$l}'; }
+export STUB_LS_LIVE='{"terminals":[{"address":"a1"},{"address":"a2"},{"address":"a3"},{"address":"a4"},{"address":"a5"}]}'
+export STUB_GET_a1 STUB_GET_a2 STUB_GET_a3 STUB_GET_a4 STUB_GET_a5
+STUB_GET_a1=$(term a1 "" /opt/claude/claude '{}')
+STUB_GET_a2=$(term a2 "" claude '{"watch":"off"}')
+STUB_GET_a3=$(term a3 t1 claude '{}')
+STUB_GET_a4=$(term a4 "" /usr/bin/bash '{}')
+STUB_GET_a5=$(term a5 "" codex '{"watch.old":"1"}')
+STUB_GET=$(get live working 1) watch pass
+ok "a dry run says it would watch a new top-level session" grep -q 'a1: would watch it as the lead' "$T/out"
+ok "a dry run sets no label" not_logged '^label'
+STUB_GET=$(get live working 1) watch pass --apply
+ok "a new top-level agent session is watched as the lead" logged '^label a1 watch=on watch.nudges=0 watch.alerted= watch.handoff= lead=1$'
+ok "an opted-out session, a worker, a shell and an old session are not" not_logged '^label a[2-5] '
+unset STUB_LS_LIVE STUB_GET_a1 STUB_GET_a2 STUB_GET_a3 STUB_GET_a4 STUB_GET_a5
 
 # watcherctl: a dry run writes nothing; install writes both units for this checkout; uninstall removes them.
 ctl() {

@@ -286,8 +286,9 @@ deslop_fail_over:
   type: str
   help: >-
     The percent of a PR's added lines that may be duplicates before the Deslop
-    check fails the PR, for example 10. Empty means warn only: it comments and
-    never fails.
+    check fails the PR, for example 10. Empty means no limit. Either way the
+    check fails while a duplicate the PR adds has no decision: fixed, or kept
+    with a line in .deslop-decisions.
   default: ""
   validator: "{% if deslop_fail_over and not (deslop_fail_over | string | regex_search('^(100|[0-9]{1,2})([.][0-9]+)?$')) %}Give a number from 0 to 100, or leave it empty.{% endif %}"
 

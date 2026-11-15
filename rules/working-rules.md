@@ -68,6 +68,7 @@ add a check, add its row. When a mistake can no longer happen, drop its rule.
 | A merge needs green checks at the head | Branch protection on `main` requires the `check`, `template` and `docs` jobs |
 | A merged branch is deleted on the forge | The repo setting that deletes head branches on merge |
 | An operator command opens in a pane, not a `!` line | `skills/herdr/assets/operator-run.sh` refuses outside Herdr and is tested by `scripts/tests/operator-run.test.sh`; choosing it is prose |
+| A PR's Deslop findings get a decision | The template's Duplicate code job fails while a duplicate the PR adds is neither fixed nor kept in `.deslop-decisions`; the template gate fails CI when the job no longer calls the check |
 | Every project keeps the CI pattern at its own slot | The template gate's shell section fails CI on drift; `scripts/audit-builds.py` lists every project and any shared schedule |
 | pstack for tier 2 and 3 work in an app or a command-line tool | The project's SessionStart hook reads `.claude/pstack-mandate.md`; the template gate fails CI when the hook is gone |
 | A source file over 5,000 tokens gets a refactor issue | The template's `scripts/gate.sh --fast` asks for the issue when a staged file passes the cap; opening it is prose |

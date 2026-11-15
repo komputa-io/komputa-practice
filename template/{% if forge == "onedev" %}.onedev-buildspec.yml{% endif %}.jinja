@@ -118,7 +118,9 @@ jobs:
 # Duplicate code that a pull request adds, found by Deslop (version and checksum
 # in scripts/deslop.pin). It runs on pull requests only, in a job of its own so a
 # missing secret fails this job and not CI. It leaves one comment on the PR and
-# edits it on each push. {% if deslop_fail_over %}It fails the PR above {{ deslop_fail_over }}% of the added lines.{% else %}Warn only: it never fails the PR over a finding.{% endif %}
+# edits it on each push. {% if deslop_fail_over %}It fails the PR above {{ deslop_fail_over }}% of the added lines.{% endif %}
+# It fails while a duplicate the PR adds has no decision: fixed, or kept in
+# .deslop-decisions (scripts/deslop-decisions.sh).
 # The comment needs one job secret, the access token of an account that may
 # only comment on pull requests: ONEDEV_COMMENT_TOKEN. OneDev authorises a pull
 # request's build by its source branch, so the secret must be readable on every
@@ -150,6 +152,9 @@ jobs:
         export ODEV_HOST='@server_url@' ODEV_PROJECT='@project_path@'
         scripts/deslop-comment.sh --forge onedev --pr '@pull_request_number@' --report .deslop-pr/deslop-report.json --post \
           || echo 'WARNING deslop: the PR comment was not posted (see the error above)'
+        if [ "$rc" -eq 0 ]; then
+          scripts/deslop-decisions.sh --report .deslop-pr/deslop-report.json || rc=$?
+        fi
         exit "$rc"
     envVars:
     - name: ODEV_TOKEN

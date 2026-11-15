@@ -49,11 +49,13 @@ body=$(jq -r --arg marker "$marker" '
     else "**Deslop:** This PR adds \($n) duplicate\(if $n == 1 then "" else "s" end)"
       + " (\($r.metrics.diff.duplication_percent * 10 | round / 10)% of its added lines)."
       + ($all[:10] | to_entries | map(
-          "\n\n\(.key + 1). **\(.value.kind | gsub("_"; " "))**: new \([.value.occurrences[] | select(.in_diff) | lines] | join(", "))"
+          "\n\n\(.key + 1). **\(.value.kind | gsub("_"; " "))** `\(.value.id)`: new \([.value.occurrences[] | select(.in_diff) | lines] | join(", "))"
           + (([.value.occurrences[] | select(.in_diff | not) | lines] | .[:3]) as $old
             | if ($old | length) > 0 then "; existing copy \($old | join(", "))" else "; no existing copy, both are new" end)
         ) | join(""))
       + if $n > 10 then "\n\n…and \($n - 10) more." else "" end
+      + "\n\nFix each one, or keep it with a line `<cluster id> keep <reason>` in `.deslop-decisions`."
+      + " The Duplicate code check fails until each one has a decision."
     end' "$report")
 
 if ((! post)); then

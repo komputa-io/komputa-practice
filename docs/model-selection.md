@@ -20,6 +20,8 @@ A `claude` with no `--model` runs on the `"model"` in `settings.json`, which is 
 | `reviewer` | `judgment and prose` |
 | `verifier` | `verifier`, else `judgment and prose` |
 
+A lead (a session labelled `lead=1`; the watcher labels each top-level session so) is held to the `lead` line exactly. Sitrep Live warns ("lead off plan") when a lead runs another model family, stronger without a move-up reason or weaker at all, or, when the line names an effort and the session reports one, another effort. Nothing starts a lead on its line, so switch it with `/model` and `/effort`. A worker is flagged only when it runs a stronger model than its line.
+
 A tier 2 verifier runs as `verifier`: the lead starts the reviewer template with `--label role=verifier`, and `role-args` tries that line first. `reviewer` stays for adversarial review.
 
 A value is a model with an optional effort, as in `<model> @<effort>`. Without an effort, `default effort:` applies; `session` adds none. With no sheet, no such line or an unreadable value, `role-args` prints nothing and says so on stderr, so `claude` runs on the `"model"` in `settings.json`. `app/server/src/fleet/analysis/runner.ts` reads the same line format.

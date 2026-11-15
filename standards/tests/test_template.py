@@ -88,6 +88,7 @@ COMMON_FILES = [
     "scripts/update-deps.sh",
     "scripts/deslop-pr.sh",
     "scripts/deslop-comment.sh",
+    "scripts/deslop-decisions.sh",
     "scripts/deslop-issues.sh",
     "scripts/deslop.pin",
     ".deslop.toml",
@@ -171,6 +172,7 @@ def test_rendered_scripts_pass_shellcheck_and_shfmt(tmp_path, name):
         out / "scripts/update-deps.sh",
         out / "scripts/deslop-pr.sh",
         out / "scripts/deslop-comment.sh",
+        out / "scripts/deslop-decisions.sh",
         out / "scripts/deslop-issues.sh",
         out / ".githooks/pre-commit",
         *out.glob("scripts/install-cargo-deny.sh"),
@@ -1687,6 +1689,7 @@ def test_a_bad_test_folder_answer_is_refused(tmp_path):
 
 DESLOP_SCRIPTS = TEMPLATE / "template/scripts"
 CLUSTER = {
+    "id": "c1a2",
     "kind": "nearly_identical",
     "mass": 90,
     "intersects_diff": True,
@@ -1738,7 +1741,11 @@ def test_the_comment_names_each_duplicate_and_where_its_twin_is(tmp_path):
     assert done.stdout.startswith(
         "<!-- deslop-pr -->\n**Deslop:** This PR adds 1 duplicate (12.3% of its added lines)."
     )
-    assert "1. **nearly identical**: new `new.ts:1-9`; existing copy `old.ts:5-13`" in done.stdout
+    assert (
+        "1. **nearly identical** `c1a2`: new `new.ts:1-9`; existing copy `old.ts:5-13`"
+        in done.stdout
+    )
+    assert "keep it with a line `<cluster id> keep <reason>` in `.deslop-decisions`" in done.stdout
     assert "dry run" in done.stdout
 
 
@@ -1759,6 +1766,34 @@ def test_with_no_duplicates_it_updates_an_old_comment_but_posts_no_new_one(tmp_p
     assert log == ""
     _, log = _comment(tmp_path / "old", *args, gh_list="42")
     assert "No new duplicates." in log
+
+
+def _decisions(tmp_path: Path, clusters: list[dict], kept: str) -> subprocess.CompletedProcess[str]:
+    (tmp_path / ".deslop-decisions").write_text(kept)
+    return subprocess.run(
+        [str(DESLOP_SCRIPTS / "deslop-decisions.sh"), "--report", str(_report(tmp_path, clusters))],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+    )
+
+
+def test_a_duplicate_the_pr_adds_holds_the_merge_until_it_is_fixed_or_kept(tmp_path):
+    old = {**CLUSTER, "id": "old9", "intersects_diff": False}
+    held = _decisions(tmp_path, [CLUSTER, old], "")
+    assert held.returncode == 3
+    assert "c1a2  nearly identical  new.ts:1-9" in held.stderr and "old9" not in held.stderr
+    kept = _decisions(
+        tmp_path, [CLUSTER, old], "# kept on purpose\nc1a2 keep the parsers will diverge\n"
+    )
+    assert kept.returncode == 0, kept.stderr
+    fixed = _decisions(tmp_path, [old], "")
+    assert fixed.returncode == 0, fixed.stderr
+
+
+def test_a_keep_line_with_no_reason_is_refused(tmp_path):
+    done = _decisions(tmp_path, [CLUSTER], "c1a2 keep\n")
+    assert done.returncode == 1 and "line 1 is not" in done.stderr
 
 
 def _deslop_release(tmp_path: Path, exit_code: int) -> dict[str, str]:
@@ -1824,6 +1859,7 @@ def test_ci_runs_the_deslop_check_on_pull_requests_with_the_pinned_release(tmp_p
         "scripts/deslop-pr.sh" in ci
         and "--fail-over 10" in ci
         and "scripts/deslop-comment.sh" in ci
+        and "scripts/deslop-decisions.sh --report .deslop-pr/deslop-report.json" in ci
     )
     pin = (out / "scripts/deslop.pin").read_text()
     assert pin == (DESLOP_SCRIPTS / "deslop.pin").read_text()
@@ -2168,6 +2204,7 @@ def test_the_default_slot_comes_from_the_project_name(tmp_path):
     [
         ("onedev", "drop the nightly"),
         ("onedev", "move the refresh"),
+        ("onedev", "drop the decision check"),
         ("github", "drop the refresh"),
     ],
 )
@@ -2181,6 +2218,8 @@ def test_the_full_gate_fails_when_the_ci_pattern_drifts(tmp_path, forge, drift):
         spec.write_text(spec.read_text().replace("- name: Deslop nightly", "- name: Scan"))
     elif drift == "move the refresh":
         spec.write_text(spec.read_text().replace("0 5 4 ? * SUN", "0 0 4 ? * MON"))
+    elif drift == "drop the decision check":
+        spec.write_text(spec.read_text().replace("scripts/deslop-decisions.sh", "true"))
     else:
         (out / ".github/workflows/update-deps.yml").unlink()
     gate = run_gate(out, "--only", "shell")

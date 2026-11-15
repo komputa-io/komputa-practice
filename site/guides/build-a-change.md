@@ -40,7 +40,9 @@ Use this guide for one pull request: a bug fix, a small feature, a refactor or a
 
 4. **Read the report.** The agent opens the pull request and reports the commands it ran and what they printed. For tier 2 and up, the report includes what the verifier ran and found.
 
-5. **Merge when every check passed on the last commit.** Check that CI ran on the pull request's head commit, then merge that commit:
+5. **Decide each duplicate the pull request adds.** In a project made from the template, the Duplicate code check comments on the pull request with each duplicate Deslop finds in the added lines, and fails until each one has a decision. The agent fixes it, or keeps it with one line in `.deslop-decisions`, `<cluster id> keep <reason>`, and pushes. A cluster that a later edit changes gets a new id and needs a new decision.
+
+6. **Merge when every check passed on the last commit.** Check that CI ran on the pull request's head commit, then merge that commit:
 
    ```sh
    gh pr checks <number>

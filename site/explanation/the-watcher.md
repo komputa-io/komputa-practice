@@ -16,7 +16,22 @@ second timer.
 
 ## Use it
 
-To install it and put a session on the watch, follow [Run a session overnight](/guides/overnight).
+To install it, follow [Run a session overnight](/guides/overnight).
+
+## Who is watched
+
+Every session is watched unless it opts out. Each pass first puts each live
+top-level agent session (`claude` or `codex`, started with no parent) that
+has no `watch` label on the watch and marks it the lead (`watch=on`,
+`lead=1`), as `practice-watch on` does. These are left alone:
+
+- a session labelled `watch=off` (it opted out) or `watch=waits`;
+- a worker, which has a parent and ends with it;
+- an old session that a handover left behind (`watch.old=1`);
+- a plain shell.
+
+To opt a session out, run `practice-watch off` for it, or
+`hc label <terminal> watch=off`.
 
 ## What one pass does
 
@@ -42,10 +57,11 @@ A nudge is one message, typed into the session through `hc send`:
 > watch for unattended work (nudge 1 of 12). If work remains, carry on with the
 > plan: take the default on any reversible question and say which one you
 > took. If only the operator can decide what comes next, say why and run: hc
-> label t7 watch=waits. If the work is finished, run: hc label t7 watch=
+> label t7 watch=waits. If the work is finished, run: hc label t7 watch=off
 
 So the session answers for itself. `watch=waits` holds the nudges until you
-run `practice-watch on` again; an empty `watch=` takes it off the watch.
+run `practice-watch on` again; `watch=off` takes it off the watch for good,
+and a pass does not put it back.
 
 An alert is a line in the journal (`journalctl --user -u
 practice-watch.service`). Set `WATCH_ALERT_CMD` to also send it somewhere you

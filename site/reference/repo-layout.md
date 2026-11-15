@@ -36,7 +36,7 @@ Each path in the practice repo, and what it holds.
 | `hooks/block-operator-screen.test.sh` | Tests for the hook. |
 | `hooks/block-test-weakening.sh` | A Claude Code `PreToolUse` hook for Write and Edit. It refuses an edit that deletes or weakens a test (`block-test-weakening.py` holds the logic). |
 | `hooks/block-test-weakening.test.sh` | Tests for the hook. |
-| `watcher/practice-watch` | The one watcher: a pass over each `hc` session labelled `watch=on` that nudges one gone idle and alerts once on one blocked, out of nudges or ended. `site/explanation/the-watcher.md` explains it. |
+| `watcher/practice-watch` | The one watcher: a pass that puts each top-level agent session in `hc` on the watch unless it is labelled `watch=off`, then, for each session labelled `watch=on`, nudges one gone idle and alerts once on one blocked, out of nudges or ended. `site/explanation/the-watcher.md` explains it. |
 | `watcher/watcherctl` | Installs, removes, switches on and off the watcher's systemd user timer (`install`, `uninstall`, `enable`, `disable`, `status`). `install` also turns on linger, so the timer runs after logout. |
 | `watcher/practice-watch.test.sh` | Tests for both, against stub `hc` and `systemctl`. |
 | `scripts/check.sh` | Runs every check in this repo. CI (`.github/workflows/check.yml`) runs the same command. |
