@@ -73,7 +73,10 @@ def onedev_project(spec: str, copier: str, name: str) -> Project:
 
 def onedev(host: str) -> list[Project]:
     paths = [
-        p["path"] for p in json.loads(run("odev", "project", "list", "--host", host, "--json"))
+        p["path"]
+        for p in json.loads(
+            run("odev", "project", "list", "--host", host, "--limit", "1000", "--json")
+        )
     ]
     found = []
     with tempfile.TemporaryDirectory() as tmp:

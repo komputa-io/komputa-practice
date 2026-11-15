@@ -465,7 +465,14 @@ ASK_FOR_ISSUE = "Open a refactor issue on the forge at high priority"
 
 @pytest.mark.parametrize(
     ("name", "counted"),
-    [("notes.md", True), ("uv.lock", False), ("pkg/fixtures/data.json", False)],
+    [
+        ("query.sql", True),
+        ("bin/tool", True),
+        ("notes.md", False),
+        ("cv/cv.html", False),
+        ("uv.lock", False),
+        ("pkg/fixtures/data.json", False),
+    ],
 )
 def test_the_fast_gate_allows_a_new_file_over_the_token_cap_and_asks_for_an_issue(
     tmp_path, name, counted
@@ -473,7 +480,9 @@ def test_the_fast_gate_allows_a_new_file_over_the_token_cap_and_asks_for_an_issu
     out = render(tmp_path / "p", ["shell"])
     _repo(out)
     (out / name).parent.mkdir(parents=True, exist_ok=True)
-    (out / name).write_text("x" * 20_004 + "\n")
+    # Source code counts, a #! script with no extension too; documents never do.
+    head = "#!/bin/sh\n" if name == "bin/tool" else ""
+    (out / name).write_text(head + "x" * (20_004 - len(head)) + "\n")
     git(out, "add", name)
     gate = run_gate(out, "--fast")
     assert gate.returncode == 0, gate.stdout + gate.stderr
@@ -486,16 +495,16 @@ def test_the_fast_gate_allows_a_new_file_over_the_token_cap_and_asks_for_an_issu
 def test_a_listed_large_file_asks_again_only_when_it_grows(tmp_path):
     out = render(tmp_path / "p", ["shell"])
     _repo(out)
-    big, listed = out / "big.md", out / ".gate-size-baseline"
+    big, listed = out / "big.sql", out / ".gate-size-baseline"
     big.write_text("x" * 40_000)
     git(out, "add", "-A")
     git(out, "commit", "-q", "--no-verify", "-m", "init")
     assert run_scoped(out, "--size-baseline").returncode == 0
-    assert listed.read_text() == "10000 big.md\n"
+    assert listed.read_text() == "10000 big.sql\n"
     for size, asks, line in (
-        (40_004, True, "10001 big.md\n"),
-        (40_000, False, "10001 big.md\n"),
-        (30_000, False, "7500 big.md\n"),
+        (40_004, True, "10001 big.sql\n"),
+        (40_000, False, "10001 big.sql\n"),
+        (30_000, False, "7500 big.sql\n"),
         (100, False, ""),
     ):
         big.write_text("x" * size)

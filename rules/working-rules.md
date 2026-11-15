@@ -70,7 +70,7 @@ add a check, add its row. When a mistake can no longer happen, drop its rule.
 | An operator command opens in a pane, not a `!` line | `skills/herdr/assets/operator-run.sh` refuses outside Herdr and is tested by `scripts/tests/operator-run.test.sh`; choosing it is prose |
 | Every project keeps the CI pattern at its own slot | The template gate's shell section fails CI on drift; `scripts/audit-builds.py` lists every project and any shared schedule |
 | pstack for tier 2 and 3 work in an app or a command-line tool | The project's SessionStart hook reads `.claude/pstack-mandate.md`; the template gate fails CI when the hook is gone |
-| A file over 5,000 tokens gets a refactor issue | The template's `scripts/gate.sh --fast` asks for the issue when a staged file passes the cap; opening it is prose |
+| A source file over 5,000 tokens gets a refactor issue | The template's `scripts/gate.sh --fast` asks for the issue when a staged file passes the cap; opening it is prose |
 
 ## Rules
 
@@ -213,8 +213,8 @@ exist, in a reviewed pull request whose text lists what goes, so that the operat
   the Deslop nightly and the weekly dependency refresh, at its own
   `schedule_slot`. Give a new project a free slot (`scripts/audit-builds.py`
   lists them), so that no two projects on one server run at once.
-- A file over 5,000 tokens (bytes / 4) is allowed. When the gate says a
-  staged file is over the cap, open a refactor issue on the forge at high
+- A source file over 5,000 tokens (bytes / 4) is allowed. Documents (HTML,
+  Markdown, CSS) never count. When the gate says a staged file is over the cap, open a refactor issue on the forge at high
   priority (OneDev `Priority=Major`, GitHub label `priority: high`), unless
   one is open for that file. The issue names the file and its size, and asks
   for the split: one module for each concern, and tests in their own file.

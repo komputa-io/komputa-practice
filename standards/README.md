@@ -82,10 +82,11 @@ The gate has two tiers. `gate.sh --fast` runs on commit. The full gate runs
 before a PR and in CI. No hook runs on push. A partial run on push must map
 files to tests, and that mapping was where the defects were (issue #46).
 
-`gate.sh --fast` allows a staged file over 5,000 tokens (bytes / 4), and asks
+`gate.sh --fast` allows a staged source file over 5,000 tokens (bytes / 4), and asks
 for a refactor issue on the forge at high priority: a large file costs tokens on
-every later call of an agent that read it. Lock files, generated code, test
-data, the template's own files and binary files do not count.
+every later call of an agent that read it. Only source code counts: documents
+(HTML, Markdown, CSS and the like), lock files, generated code, test data, the
+template's own files and binary files do not.
 `.gate-size-baseline` lists the files over the cap, one "<tokens> <path>" line
 each. The gate adds a file at its new size, so it asks again only when the file
 grows, and takes it off the list when it is under the cap.

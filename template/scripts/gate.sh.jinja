@@ -332,15 +332,24 @@ fi
 size_cap=5000
 size_list=.gate-size-baseline
 
-# size_counted PATH: true for a file that the cap covers. Lock files, generated
-# code, test data, the files that the template manages and binary files are
-# not covered.
+# size_counted PATH: true for a file that the cap covers: source code only, by
+# its extension, or a script with no extension whose first line is a #! line.
+# Documents (HTML, Markdown, CSS, SVG, text) are content, not modules to split,
+# so they never count. Lock files, generated code, test data, the files that
+# the template manages and binary files are not covered either.
 size_counted() {
   case "$1" in
     *.lock | *-lock.json | *-lock.yaml | *packages.lock.json | *.min.js | *.min.css | *.map | *.snap | *.g.cs | *.generated.* | *.Designer.cs) return 1 ;;
     fixtures/* | */fixtures/* | __fixtures__/* | */__fixtures__/* | testdata/* | */testdata/* | */__snapshots__/*) return 1 ;;
     scripts/gate.sh | scripts/update-deps.sh | .secrets.baseline | .gate-size-baseline) return 1 ;;
-    *) ;;
+    *.py | *.pyi | *.ts | *.tsx | *.mts | *.cts | *.js | *.jsx | *.mjs | *.cjs | *.vue | *.svelte) ;;
+    *.cs | *.fs | *.razor | *.cshtml | *.rs | *.go | *.java | *.kt | *.swift | *.sql) ;;
+    *.sh | *.bash | *.ps1 | *.psm1) ;;
+    *)
+      # Any other extension is not code. No extension: code when it starts #!.
+      [[ ${1##*/} != *.* ]] || return 1
+      head -c 2 -- "$1" 2>/dev/null | grep -q '^#!' || return 1
+      ;;
   esac
   # grep -I finds no line in a binary file, or in an empty one.
   grep -Iq . -- "$1"
