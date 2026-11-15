@@ -119,10 +119,12 @@ jobs:
 # in scripts/deslop.pin). It runs on pull requests only, in a job of its own so a
 # missing secret fails this job and not CI. It leaves one comment on the PR and
 # edits it on each push. {% if deslop_fail_over %}It fails the PR above {{ deslop_fail_over }}% of the added lines.{% else %}Warn only: it never fails the PR over a finding.{% endif %}
-# The comment needs one job secret on main, the access token of an account that
-# may comment on pull requests: ONEDEV_COMMENT_TOKEN. Set it once, from your own
+# The comment needs one job secret, the access token of an account that may
+# only comment on pull requests: ONEDEV_COMMENT_TOKEN. OneDev authorises a pull
+# request's build by its source branch, so the secret must be readable on every
+# branch; a narrow account is what keeps that safe. Set it once, from your own
 # shell:
-#   {{ vault_command }} <item> | odev secret set ONEDEV_COMMENT_TOKEN
+#   {{ vault_command }} <item> | odev secret set ONEDEV_COMMENT_TOKEN --branches '**'
 # The comment goes through curl and the REST API; the token is read from the
 # environment, never from an argument. A failed comment prints a WARNING line
 # and leaves the job green.
