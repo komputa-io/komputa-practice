@@ -69,6 +69,7 @@ add a check, add its row. When a mistake can no longer happen, drop its rule.
 | A merged branch is deleted on the forge | The repo setting that deletes head branches on merge |
 | An operator command opens in a pane, not a `!` line | `skills/herdr/assets/operator-run.sh` refuses outside Herdr and is tested by `scripts/tests/operator-run.test.sh`; choosing it is prose |
 | Every project keeps the CI pattern at its own slot | The template gate's shell section fails CI on drift; `scripts/audit-builds.py` lists every project and any shared schedule |
+| pstack for tier 2 and 3 work in an app or a command-line tool | The project's SessionStart hook reads `.claude/pstack-mandate.md`; the template gate fails CI when the hook is gone |
 | A file over 5,000 tokens gets a refactor issue | The template's `scripts/gate.sh --fast` asks for the issue when a staged file passes the cap; opening it is prose |
 
 ## Rules
@@ -170,8 +171,11 @@ reply.
   asks for the playbook by name. For every tier, write the short plan above
   and do not run `check-plan`.
 - pstack's fan-out skills (`architect`, `arena`, `interrogate`, `swarm`, and the panels of `how` and `why`) are
-  for when the operator asks for one by name. For every tier, design and build in the session itself. The
+  for when the operator asks for one by name. Outside poteto-mode, design and build in the session itself. The
   tier 3 adversarial review is one reviewer, not a panel. One feature on pstack's full path starts ten or more agents, and each one rereads its context.
+- In an app or a command-line tool made from the template, pstack is on, scoped by tier: a tier 2 or 3 pull
+  request runs pstack's poteto-mode for its plan, build and verification, with the subagents poteto-mode starts.
+  A tier 1 change stays in the session. Everywhere else, pstack runs only when the operator names it.
 
 ### Tests follow risk
 

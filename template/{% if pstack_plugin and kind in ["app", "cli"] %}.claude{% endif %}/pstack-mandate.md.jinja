@@ -1,0 +1,9 @@
+This project is {{ 'an app' if kind == 'app' else 'a command-line tool' }}, so pstack is on here, scoped by tier
+(komputa-practice working rules, "Size the process to the work"):
+
+- Tier 2 (a pull request that adds or changes behaviour a user sees) and tier 3
+  (security, private content, money, data that cannot be restored, or a service
+  other people depend on): run pstack's poteto-mode for the plan, the build and
+  the verification. State the size before the operator's go, as for any program.
+- Tier 1 (a fix, a rename, docs, a refactor, or any change with no behaviour a
+  user sees): do it in this session, without poteto-mode.

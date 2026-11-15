@@ -9,6 +9,7 @@ _answers_file: .copier-answers.yml
 # Seeded once: the repo owns these after the first copy. Every other file stays
 # with the template and `copier update` merges changes into it.
 _skip_if_exists:
+  - .claude/settings.json
   - CLAUDE.md
   - CONTEXT.md
   - README.md
@@ -137,6 +138,15 @@ nextjs:
 vault_command:
   type: str
   help: The command that reads a secret on a workstation, for example your password manager's CLI
+
+pstack_plugin:
+  type: str
+  help: >-
+    The Claude Code plugin id of pstack on your workstations, for example
+    pstack@<marketplace>. With it, an app or a command-line tool enables pstack
+    in .claude/settings.json, and each session there starts with the rule to run
+    poteto-mode for tier 2 and 3 work. Empty leaves pstack off.
+  default: ""
 
 # Where the repo is hosted. It picks the CI file, the PR template and
 # scripts/forge/<forge>.sh. It comes from your environment file, never a default.

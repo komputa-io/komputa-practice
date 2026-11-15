@@ -646,6 +646,16 @@ if [[ -n "${want[shell]-}" ]]; then
       fi
     done
 {%- endif %}
+{%- if pstack_plugin and kind in ["app", "cli"] %}
+    # pstack, scoped by tier: an app or a command-line tool enables the plugin and
+    # starts each session with .claude/pstack-mandate.md (the template seeds both).
+    for want in '"{{ pstack_plugin }}": true' 'pstack-mandate.md'; do
+      if ! grep -qF -- "$want" .claude/settings.json 2>/dev/null; then
+        printf 'gate: .claude/settings.json needs %s, as the template seeds it (pstack for tier 2 and 3 work)\n' "$want" >&2
+        hits=$((hits + 1))
+      fi
+    done
+{%- endif %}
     ((hits == 0)) || exit 1
   fi
 

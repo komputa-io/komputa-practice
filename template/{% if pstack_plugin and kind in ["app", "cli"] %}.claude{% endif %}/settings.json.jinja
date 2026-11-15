@@ -1,0 +1,17 @@
+{
+  "enabledPlugins": {
+    "{{ pstack_plugin }}": true
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cat \"$CLAUDE_PROJECT_DIR/.claude/pstack-mandate.md\""
+          }
+        ]
+      }
+    ]
+  }
+}

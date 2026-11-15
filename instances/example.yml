@@ -13,3 +13,8 @@ vault_command: <your secret command>
 # The forge that hosts your repos: onedev or github. It picks the CI file, the
 # PR template and scripts/forge/<forge>.sh.
 forge: <onedev or github>
+
+# The Claude Code plugin id of pstack on your workstations (pstack@<marketplace>,
+# as `claude plugin list` shows it). With it, each app or command-line tool
+# turns pstack on, scoped by tier. Leave it empty for no pstack.
+pstack_plugin: ""

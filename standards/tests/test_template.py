@@ -2177,3 +2177,34 @@ def test_the_full_gate_fails_when_the_ci_pattern_drifts(tmp_path, forge, drift):
     gate = run_gate(out, "--only", "shell")
     assert gate.returncode == 1, gate.stdout + gate.stderr
     assert "as the template seeds it (schedule_slot 13)" in gate.stderr
+
+
+# (t) pstack, scoped by tier, in an app or a command-line tool.
+
+PSTACK = "pstack@example-marketplace"
+
+
+@pytest.mark.parametrize(
+    ("kind", "plugin", "seeded"),
+    [("app", PSTACK, True), ("cli", PSTACK, True), ("library", PSTACK, False), ("app", "", False)],
+)
+def test_an_app_or_cli_turns_pstack_on_scoped_by_tier(tmp_path, kind, plugin, seeded):
+    out = render(tmp_path / "p", ["shell"], kind=kind, pstack_plugin=plugin)
+    settings, mandate = out / ".claude/settings.json", out / ".claude/pstack-mandate.md"
+    assert settings.exists() is seeded and mandate.exists() is seeded
+    if seeded:
+        data = json.loads(settings.read_text())
+        assert data["enabledPlugins"] == {PSTACK: True}
+        assert "pstack-mandate.md" in data["hooks"]["SessionStart"][0]["hooks"][0]["command"]
+        assert "Tier 2" in mandate.read_text() and "without poteto-mode" in mandate.read_text()
+
+
+def test_the_full_gate_fails_when_an_app_loses_its_pstack_hook(tmp_path):
+    out = render(tmp_path / "p", ["shell"], kind="app", pstack_plugin=PSTACK)
+    _repo(out)
+    git(out, "add", "-A")
+    assert run_gate(out, "--only", "shell").returncode == 0
+    (out / ".claude/settings.json").write_text('{"enabledPlugins": {}}\n')
+    gate = run_gate(out, "--only", "shell")
+    assert gate.returncode == 1, gate.stdout + gate.stderr
+    assert "needs pstack-mandate.md" in gate.stderr
