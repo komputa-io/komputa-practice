@@ -12,3 +12,4 @@ These pages explain the ideas behind the practice. Read them in this order.
 5. [Context economics](/explanation/context-economics): where the tokens go.
 6. [The watcher](/explanation/the-watcher): how one timer keeps a long session going while nobody watches it.
 7. [The archive](/explanation/archive): what the practice no longer runs, and why.
+8. [Sitrep Live](/explanation/sitrep-live): the dashboard the workers report to, and where its docs live.

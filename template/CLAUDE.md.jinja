@@ -35,5 +35,8 @@ it current. Where this file and `scripts/gate.md` differ on the gate,
 - The forge is GitHub through `gh`.
 - Fill in every section of `.github/pull_request_template.md` that applies;
   Why, Test plan and Verification are required.
+- The weekly refresh (`.github/workflows/update-deps.yml`) opens its PR with the job
+  token. Turn on the repo setting "Allow GitHub Actions to create and approve pull
+  requests", or it fails. Its PR does not start the gate: close and reopen it.
 {%- endif %}
 </important>

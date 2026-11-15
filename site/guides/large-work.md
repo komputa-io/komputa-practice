@@ -24,9 +24,9 @@ Use this guide for work that needs many pull requests: a new app, a large featur
 
 2. **Read the size before you say go.** The plan states the tier of each pull request, how many there are, and the wall time it expects. When it expects more than two hours, it also states the smallest version that meets the goal, and its time. Cut the scope here, not later.
 
-3. **Say go.** The session then works on its own on reversible work. When it has a question about the work, it applies a sensible default, records it and carries on. It stops for you only for what cannot be undone: a deploy, a delete, a message to people.
+3. **Say go.** The session then works on its own on reversible work. When it has a question about the work, it applies a sensible default, records it and carries on. It stops for you only for what cannot be undone: a delete, a message to people. It merges and deploys on its own, unless you tell it not to in the session.
 
-4. **Let it merge one pull request at a time.** Each pull request goes through [Build a change](/guides/build-a-change). The next one starts from the merged result, so each review is small.
+4. **Let it merge and deploy one pull request at a time.** It deletes each merged branch. Each pull request goes through [Build a change](/guides/build-a-change). The next one starts from the merged result, so each review is small.
 
 5. **For a project in milestones, set the threat model first.** The architecture doc states the threat model and the severity scale (impact times likelihood). Each milestone gets one review and one fix round. After that, only a high finding reopens it; the rest go to issues for the next planned work.
 

@@ -3,6 +3,8 @@
 # project template; scripts/update-deps.sh calls it.
 #   scripts/forge/onedev.sh check
 #       fail unless ODEV_HOST, ODEV_PROJECT and ODEV_TOKEN are set
+#   scripts/forge/onedev.sh open-update-pr
+#       print the number of an open PR from a chore/update-deps- branch, or nothing
 #   scripts/forge/onedev.sh pr-create BRANCH TITLE DESCRIPTION
 #       open a PR from BRANCH into the default branch; print its number
 # CI sets the three variables in .onedev-buildspec.yml.
@@ -14,7 +16,7 @@ die() {
   exit 1
 }
 usage() {
-  printf 'usage: scripts/forge/onedev.sh check | pr-create BRANCH TITLE DESCRIPTION\n' >&2
+  printf 'usage: scripts/forge/onedev.sh check | open-update-pr | pr-create BRANCH TITLE DESCRIPTION\n' >&2
   exit 2
 }
 
@@ -40,6 +42,24 @@ json() {
   printf '%s' "${s//$'\n'/\\n}"
 }
 
+open_update_pr() {
+  local list
+  check
+  # shellcheck disable=SC2310 # the status is the answer.
+  list=$(api pulls -G --data-urlencode "query=\"Target Project\" is \"$ODEV_PROJECT\" and open" \
+    --data-urlencode offset=0 --data-urlencode count=100) \
+    || die "could not list the open PRs, so cannot tell whether an update PR is waiting"
+  # OneDev pretty-prints JSON; a PR's own fields sit at four spaces, in no fixed order.
+  # awk reads it all, so curl is never cut off.
+  awk '
+    /^  \{/ { branch = ""; num = "" }
+    /^    "sourceBranch"/ { branch = $3 }
+    /^    "number"/ { num = $3; sub(/,$/, "", num) }
+    /^  \}/ && branch ~ /^"chore\/update-deps-/ && !found { found = num }
+    END { if (found != "") print found }
+  ' <<<"$list"
+}
+
 pr_create() {
   local branch=$1 title=$2 desc=$3 id base body pull number
   check
@@ -61,6 +81,10 @@ case "${1-}" in
   check)
     (($# == 1)) || usage
     check
+    ;;
+  open-update-pr)
+    (($# == 1)) || usage
+    open_update_pr
     ;;
   pr-create)
     (($# == 4)) || usage

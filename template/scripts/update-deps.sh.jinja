@@ -304,13 +304,15 @@ fi
 # The forge script opens the PR; check its settings before anything is pushed.
 forge=scripts/forge/{{ forge }}.sh
 "$forge" check
+waiting=$("$forge" open-update-pr)
+[[ -z "$waiting" ]] || die "an update PR is already open (#${waiting#\#}); merge or close it first"
 
 branch="chore/update-deps-$(date +%Y-%m-%d)"
 git switch -c "$branch"
 git commit -qam "chore(deps): refresh dependencies within their ranges"
 git push -q -u origin "$branch"
 title='chore(deps): refresh dependencies within their ranges'
-desc=$'## Why\n\nThe weekly refresh: newer versions within the declared ranges, each at least seven days old.\n\n## Test plan\n\n- No new tests. The existing gate is the test of a dependency refresh.\n\n## Verification\n\n- CI runs the full gate on this PR. Merge only when it is green.'
+desc=$'## Why\n\nThe weekly refresh: newer versions within the declared ranges, each at least seven days old.\n\n## Test plan\n\n- No new tests. The existing gate is the test of a dependency refresh.\n\n## Verification\n\n{% if forge == 'github' %}- The gate does not start on a PR opened with the job token. Close and reopen this PR, or push to its branch as a person, to start it. Merge only when it is green.{% else %}- CI runs the full gate on this PR. Merge only when it is green.{% endif %}'
 if [[ -s "$notes" ]]; then
   desc+=$'\n\n## Image pins\n\n'$(sed 's/^/- /' "$notes")
 fi

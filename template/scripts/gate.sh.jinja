@@ -18,8 +18,9 @@
 #                                     about 5 s)
 #   scripts/gate.sh --size-baseline   write .gate-size-baseline: the tracked files
 #                                     over the size cap of 5,000 tokens. --fast
-#                                     refuses a staged file over the cap, or over
-#                                     its number in that list
+#                                     allows a staged file over the cap, or over
+#                                     its number in that list, asks for a refactor
+#                                     issue, and lists the file at its new size
 #   scripts/gate.sh [--full | --fast] --only SECTION ...
 #                                     only those sections: {{ (langs + ['shell', 'local']) | join(', ') }}.
 #                                     CI runs each in its own image.
@@ -322,10 +323,11 @@ if [[ "$mode" == fast ]]; then
 fi
 
 # The file size cap. A large file costs tokens on every later call of an agent
-# that read it, so a staged file may hold at most $size_cap tokens (bytes / 4).
-# .gate-size-baseline lists the files that were over the cap when the repo
-# took up the check, as "<tokens> <path>" lines. A listed file may shrink and
-# never grow, and it leaves the list when it is under the cap.
+# that read it, so a staged file over $size_cap tokens (bytes / 4) needs a
+# refactor issue on the forge, at high priority. The gate allows the commit and
+# asks for the issue. .gate-size-baseline lists the files over the cap as
+# "<tokens> <path>" lines, so the gate asks once: again only when a listed file
+# grows. A file leaves the list when it is under the cap.
 # scripts/gate.sh --size-baseline writes the list from the tracked files.
 size_cap=5000
 size_list=.gate-size-baseline
@@ -373,7 +375,7 @@ if [[ "$mode" == fast ]]; then
     done <"$size_list"
   fi
   over=0
-  smaller=0
+  changed=0
   while IFS= read -r f; do
     [[ -n "$f" && -f "$f" ]] || continue
     # shellcheck disable=SC2310 # the status is the answer.
@@ -383,22 +385,23 @@ if [[ "$mode" == fast ]]; then
     if ((tokens > limit)); then
       printf 'gate: %s is %d tokens (bytes / 4); its limit is %d\n' "$f" "$tokens" "$limit" >&2
       over=$((over + 1))
+      listed[$f]=$tokens
+      changed=1
     elif [[ -n "${listed[$f]-}" ]] && ((tokens < limit)); then
       # 0 takes a file that is now under the cap off the list.
       listed[$f]=$((tokens > size_cap ? tokens : 0))
-      smaller=1
+      changed=1
     fi
   done < <(staged)
   if ((over > 0)); then
-    printf 'gate: split it: one module for each concern, and tests in their own file (house-architecture, large files)\n' >&2
-    die "$over staged file(s) over the size cap. A file that cannot be split goes in $size_list as '<tokens> <path>', in a reviewed PR"
+    printf 'gate: allowed. Open a refactor issue on the forge at high priority for each file above, unless one is open: split it, one module for each concern, and tests in their own file (house-architecture, large files)\n' >&2
   fi
-  if ((smaller)); then
+  if ((changed)); then
     for f in "${!listed[@]}"; do
       ((listed[$f] == 0)) || printf '%d %s\n' "${listed[$f]}" "$f"
     done | sort -k2 >"$size_list"
     git add -- "$size_list"
-    printf 'gate: staged the updated %s (a listed file is smaller)\n' "$size_list"
+    printf 'gate: staged the updated %s\n' "$size_list"
   fi
 fi
 

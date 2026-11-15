@@ -48,8 +48,9 @@ repo's forge CLI, named in its `CLAUDE.md`:
 - komputa-practice `template/`: the guard, with a test that it fails on the mistake and
   passes on the fix, and the repo's own rendered copy kept in step.
 
-Each PR's "Why" names the repo and the finding that showed the gap. Merge only
-on the operator's word.
+Each PR's "Why" names the repo and the finding that showed the gap. Merge it
+when its checks are green and nothing on it is open, unless the operator said
+not to.
 
 ## 4. Close the loop
 

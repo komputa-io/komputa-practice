@@ -154,9 +154,11 @@ Read the reference before you apply a rule in depth.
   is not the operator's to answer. Run it or sketch it, and let the result
   decide.
 - Stop only for a product or preference choice that no experiment can settle,
-  an action that cannot be undone (a deploy, deleting data, a force-push, a
-  message to people), or a gate the operator named. The agent instructions
-  file may name more.
+  an action that cannot be undone (deleting data, a force-push, a message to
+  people), or a gate the operator named. The agent instructions file may name
+  more.
+- A green, merged change deploys without a question, unless the operator said
+  not to in this session.
 
 ## When you design
 

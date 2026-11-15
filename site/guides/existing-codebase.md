@@ -44,7 +44,7 @@ Use this guide to start using the practice in a repo that you already have. The 
 
 4. **Fold your old checks into the gate.** `scripts/gate.sh` is the only gate. Move each check of an old gate script into `scripts/gate.local.sh`, which the gate runs with `full` or `fast`. Then remove the old script, and the CI steps that call it. `scripts/gate.md` in your repo has the rules and an example.
 
-5. **Record the large files.** The fast gate refuses a staged file over about 5,000 tokens. A file that is already over the cap goes in a baseline, and may shrink but never grow:
+5. **Record the large files.** The fast gate allows a staged file over about 5,000 tokens, and asks for a high-priority refactor issue on the forge. A file that is already over the cap goes in a baseline, so the gate asks again only when it grows. Open one refactor issue for each file the baseline lists:
 
    ```sh
    scripts/gate.sh --size-baseline

@@ -18,11 +18,13 @@ archived and how it returns.
 - Answer every dialog that a worker you start (`hc run`,
   `herdr-app do tab.new`) shows, for the operator, at once. Do not ask the
   operator. Read the screen first (`hc read`), then choose the option that
-  lets the work go on: "Yes" for a permission prompt on reversible work. The exception is an action that cannot be undone: a
-  deletion outside a worktree or scratch folder, a deploy, a write to a
-  live service, or a message to people. For those, the lead decides from
-  the evidence and records why; the worker waits. The git, delete and
-  secret hooks still block what must never run.
+  lets the work go on: "Yes" for a permission prompt on reversible work,
+  and for a deploy of merged work unless the operator said not to in this
+  session. The exception is an action that cannot be undone: a deletion
+  outside a worktree or scratch folder, any other write to a live service,
+  or a message to people. For those, the lead decides from the evidence and
+  records why; the worker waits. The git, delete and secret hooks still
+  block what must never run.
 - A worker runs on the model that its role line in `pstack-models.md`
   names. You may move a subagent or an `hc`
   worker up from it only in one of two cases:

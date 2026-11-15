@@ -105,6 +105,7 @@ FORGE_FILES = {
         ".github/pull_request_template.md",
         ".github/workflows/gate.yml",
         ".github/workflows/deslop-nightly.yml",
+        ".github/workflows/update-deps.yml",
         "scripts/forge/github.sh",
     ],
 }
@@ -459,23 +460,30 @@ def test_the_fast_gate_refuses_a_staged_file_with_more_changes_on_disk(tmp_path)
     assert run_gate(out, "--fast").returncode == 0
 
 
+ASK_FOR_ISSUE = "Open a refactor issue on the forge at high priority"
+
+
 @pytest.mark.parametrize(
-    ("name", "refused"),
+    ("name", "counted"),
     [("notes.md", True), ("uv.lock", False), ("pkg/fixtures/data.json", False)],
 )
-def test_the_fast_gate_refuses_a_new_file_over_the_token_cap(tmp_path, name, refused):
+def test_the_fast_gate_allows_a_new_file_over_the_token_cap_and_asks_for_an_issue(
+    tmp_path, name, counted
+):
     out = render(tmp_path / "p", ["shell"])
     _repo(out)
     (out / name).parent.mkdir(parents=True, exist_ok=True)
     (out / name).write_text("x" * 20_004 + "\n")
     git(out, "add", name)
     gate = run_gate(out, "--fast")
-    assert (gate.returncode == 1) is refused, gate.stdout + gate.stderr
-    if refused:
+    assert gate.returncode == 0, gate.stdout + gate.stderr
+    assert (ASK_FOR_ISSUE in gate.stderr) is counted, gate.stderr
+    if counted:
         assert f"gate: {name} is 5002 tokens (bytes / 4); its limit is 5000" in gate.stderr
+        assert (out / ".gate-size-baseline").read_text() == f"5002 {name}\n"
 
 
-def test_a_listed_large_file_may_shrink_and_never_grow(tmp_path):
+def test_a_listed_large_file_asks_again_only_when_it_grows(tmp_path):
     out = render(tmp_path / "p", ["shell"])
     _repo(out)
     big, listed = out / "big.md", out / ".gate-size-baseline"
@@ -484,15 +492,17 @@ def test_a_listed_large_file_may_shrink_and_never_grow(tmp_path):
     git(out, "commit", "-q", "--no-verify", "-m", "init")
     assert run_scoped(out, "--size-baseline").returncode == 0
     assert listed.read_text() == "10000 big.md\n"
-    for size, passes, line in (
-        (40_004, False, "10000 big.md\n"),
-        (30_000, True, "7500 big.md\n"),
-        (100, True, ""),
+    for size, asks, line in (
+        (40_004, True, "10001 big.md\n"),
+        (40_000, False, "10001 big.md\n"),
+        (30_000, False, "7500 big.md\n"),
+        (100, False, ""),
     ):
         big.write_text("x" * size)
         git(out, "add", "-A")
         gate = run_gate(out, "--fast")
-        assert (gate.returncode == 0) is passes, (size, gate.stdout + gate.stderr)
+        assert gate.returncode == 0, (size, gate.stdout + gate.stderr)
+        assert (ASK_FOR_ISSUE in gate.stderr) is asks, (size, gate.stderr)
         assert listed.read_text() == line
     assert (
         "its limit is 10000" not in gate.stderr
@@ -1124,12 +1134,16 @@ for a in "$@"; do
   if [[ "$prev" == -H && "$a" == @* ]]; then cat "${a#@}" >>"$log/headers"; fi
   if [[ "$prev" == --data-binary && "$a" == @- ]]; then cat >"$log/body"; fi
   [[ "$a" == http* ]] && url=$a
+  [[ "$a" == -G ]] && listing=1
   prev=$a
 done
 case "$url" in
   */~api/projects/ids/team/demo) printf '%s' "${STUB_ID-42}" ;;
   */~api/repositories/*/default-branch) printf '%s' "${STUB_BASE-main}" ;;
-  */~api/pulls) printf '1987' ;;
+  */~api/pulls) if [[ -n "${listing-}" ]]; then
+      [[ -z "${STUB_LIST_FAIL-}" ]] || exit 22
+      printf '%s' "${STUB_OPEN-[]}"
+    else printf '1987'; fi ;;
   # OneDev pretty-prints, one field per line, a space before each colon.
   */~api/pulls/1987) printf '{\n  "id" : 1987,\n  "number" : 7,\n  "numberScopeId" : 42\n}\n' ;;
   *) exit 22 ;;
@@ -1141,6 +1155,10 @@ STUB_GH = r"""#!/usr/bin/env bash
 # Records each call and answers like gh.
 printf '%s\0' "$@" >>"$STUB_LOG/gh"
 [[ "$1 $2" == "pr create" ]] && printf 'https://github.test/team/demo/pull/7\n'
+if [[ "$1 $2" == "pr list" ]]; then
+  [[ -z "${STUB_LIST_FAIL-}" ]] || exit 1
+  printf '%s' "${STUB_OPEN-}"
+fi
 exit 0
 """
 
@@ -1200,14 +1218,56 @@ def test_the_refresh_opens_its_pr_through_the_onedev_api(tmp_path):
     assert f"opened PR #7 from {branch}" in done.stdout
 
 
+def _open_pr(number: int, branch: str) -> str:
+    """One PR as OneDev prints it: its own fields at four spaces, the number after the branch."""
+    return (
+        f'  {{\n    "id" : {number + 1000},\n    "status" : "OPEN",\n    "targetBranch" : "main",\n'
+        f'    "sourceBranch" : "{branch}",\n    "submitTimeGroups" : {{\n      "day" : 1\n    }},\n'
+        f'    "number" : {number},\n    "commentCount" : 0,\n    "targetProjectId" : 42\n  }}'
+    )
+
+
+OPEN_UPDATE_PRS = (
+    "[\n" + _open_pr(5, "feat/x") + ",\n" + _open_pr(9, "chore/update-deps-2026-11-09") + "\n]"
+)
+OPEN_OTHER_PRS = "[\n" + _open_pr(5, "feat/x") + "\n]"
+
+
+@pytest.mark.parametrize(("forge", "open_pr"), [("onedev", OPEN_UPDATE_PRS), ("github", "9")])
+def test_the_refresh_stops_while_an_update_pr_is_open(tmp_path, forge, open_pr):
+    out, log, env = _refreshable(tmp_path, forge=forge)
+    done = refresh(out, {**env, "STUB_OPEN": open_pr})
+    assert done.returncode == 1
+    assert "update-deps: an update PR is already open (#9); merge or close it first" in done.stderr
+    assert git(out, "branch", "--show-current") == "main"
+    assert not (log / "body").exists()
+
+
+@pytest.mark.parametrize("forge", ["onedev", "github"])
+def test_the_refresh_stops_when_it_cannot_list_the_open_prs(tmp_path, forge):
+    out, _, env = _refreshable(tmp_path, forge=forge)
+    done = refresh(out, {**env, "STUB_LIST_FAIL": "1"})
+    assert done.returncode == 1
+    assert "forge: could not list the open PRs" in done.stderr
+    assert git(out, "branch", "--show-current") == "main"
+
+
+def test_an_open_pr_that_is_not_an_update_does_not_stop_the_refresh(tmp_path):
+    out, log, env = _refreshable(tmp_path)
+    done = refresh(out, {**env, "STUB_OPEN": OPEN_OTHER_PRS})
+    assert done.returncode == 0, done.stdout + done.stderr
+    query = (log / "args").read_text()
+    assert 'query=\\"Target\\ Project\\"\\ is\\ \\"team/demo\\"\\ and\\ open' in query
+
+
 def test_the_refresh_keeps_the_token_off_every_command_line(tmp_path):
     out, log, env = _refreshable(tmp_path)
     assert refresh(out, env).returncode == 0
     args = (log / "args").read_text()
     assert "s3cret-token" not in args
-    assert args.count("--max-time 30") == 4
+    assert args.count("--max-time 30") == 5
     headers = (log / "headers").read_text().splitlines()
-    assert headers.count("Authorization: Bearer s3cret-token") == 4
+    assert headers.count("Authorization: Bearer s3cret-token") == 5
 
 
 def test_the_refresh_needs_its_onedev_settings_before_it_pushes(tmp_path):
@@ -1309,8 +1369,36 @@ def test_the_refresh_opens_its_pr_through_gh_on_github(tmp_path):
         create[create.index("--title") + 1]
         == "chore(deps): refresh dependencies within their ranges"
     )
-    assert create[create.index("--body") + 1].startswith("## Why\n\nThe weekly refresh")
+    body = create[create.index("--body") + 1]
+    assert body.startswith("## Why\n\nThe weekly refresh")
+    assert "The gate does not start on a PR opened with the job token" in body
     assert f"opened PR https://github.test/team/demo/pull/7 from {branch}" in done.stdout
+
+
+def test_the_github_refresh_runs_one_at_a_time_and_never_cancels_a_running_one(tmp_path):
+    out = render(tmp_path / "p", ["shell"], forge="github")
+    wf = yaml.safe_load((out / ".github/workflows/update-deps.yml").read_text())
+    assert wf["concurrency"] == {"group": "update-deps", "cancel-in-progress": False}
+
+
+@pytest.mark.parametrize("languages", [["shell"], ["python", "typescript"]])
+def test_the_github_refresh_runs_weekly_in_the_gate_images_and_only_the_last_job_writes(
+    tmp_path, languages
+):
+    out = render(tmp_path / "p", languages, forge="github")
+    wf = yaml.safe_load((out / ".github/workflows/update-deps.yml").read_text())
+    gate = yaml.safe_load((out / ".github/workflows/gate.yml").read_text())["jobs"]
+    assert wf[True]["schedule"] == [{"cron": "0 4 * * 1"}] and "workflow_dispatch" in wf[True]
+    assert wf["permissions"] == {"contents": "read"}
+    jobs = wf["jobs"]
+    assert jobs["open-pr"]["permissions"] == {"contents": "write", "pull-requests": "write"}
+    images = {j["container"] for j in jobs.values() if "container" in j}
+    assert images <= {j["container"] for j in gate.values() if "container" in j}
+    assert set(jobs["open-pr"]["needs"]) == set(jobs) - {"open-pr"}
+    last = " ".join(s.get("run", "") for s in jobs["open-pr"]["steps"])
+    assert "update-deps.sh --publish-only" in last
+    refresh = " ".join(s.get("run", "") for s in jobs[next(iter(jobs))]["steps"])
+    assert "git add -A" in refresh and "diff --cached" in refresh  # a new lockfile travels
 
 
 def test_the_full_gate_runs_without_git_and_records_nothing(tmp_path):

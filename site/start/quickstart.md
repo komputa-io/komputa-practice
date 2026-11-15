@@ -173,7 +173,7 @@ The sample repo is a small Python invoice library made from the practice's proje
    - Ask a verifier subagent, which did not write the change, to run the acceptance checks and read the diff.
    - Open the pull request, and report the commands it ran and what they printed.
 
-5. Read the report, check that CI passed on the pull request, and merge it. The agent asks you before it merges, unless your own `CLAUDE.md` lets it merge.
+5. Read the report. The agent merges the pull request when CI passed on its head commit and nothing on it is open, deletes the branch, and deploys. Tell it in the session when it must not merge or deploy.
 
 ## What you just saw
 
@@ -185,7 +185,7 @@ Each step was one layer of the quality funnel:
 | The gate (format, lint, types, tests) and the git hook refused mistakes with nobody watching. | 2. Static analysis |
 | The verifier ran the acceptance checks on the real code. | 3. Verification |
 | The working rules set the tier, the plan and the test budget. | 4. Prose |
-| You decided to merge. | 5. Human review |
+| You said go, and could have said stop. | 5. Human review |
 
 ## Next steps
 

@@ -65,6 +65,9 @@ add a check, add its row. When a mistake can no longer happen, drop its rule.
 | No delete that cannot be undone | `hooks/block-destructive-delete.sh` refuses it |
 | No private item in this shareable repo | `scripts/scrub-check.sh`, in the git hooks and CI |
 | Every check runs on every pull request | `scripts/check.sh`, in CI |
+| A merge needs green checks at the head | Branch protection on `main` requires the `check`, `template` and `docs` jobs |
+| A merged branch is deleted on the forge | The repo setting that deletes head branches on merge |
+| A file over 5,000 tokens gets a refactor issue | The template's `scripts/gate.sh --fast` asks for the issue when a staged file passes the cap; opening it is prose |
 
 ## Rules
 
@@ -112,6 +115,27 @@ add a check, add its row. When a mistake can no longer happen, drop its rule.
   - Ask the operator before a run that must use their real screen.
   - Sign every issue or PR comment you post with the line `🤖 Generated with [Claude Code]`. Agents comment under the operator's own forge login, and Sitrep Live reads a comment under that login without the mark as the operator's answer ("You answered"), which nudges the lead.
   - A server or dev tool a worker starts must not open a browser by itself: turn its auto-open off (a hook cannot see inside the program). Set `BROWSER=none` for the worker. `hooks/block-operator-screen.sh` refuses a worker's browser-opening commands and every `claude-in-chrome` tool (issue #69).
+
+## Merge and deploy
+
+- Merge your own pull request when all of these are true: every check
+  passed on its head commit, the verifier reported PASS where the tier needs
+  one, no review finding or question on it is open, and the forge says it
+  can merge. Do not merge when the operator said not to in this session, or
+  when the brief or the repo's `CLAUDE.md` says not to. Report each merge.
+- Use a merge commit, not a squash, and tie the merge to the green commit:
+  `gh pr merge <n> --merge --match-head-commit <sha> --delete-branch`, or
+  `odev pr merge <n> --head <sha> --delete-branch`. The git hook allows a
+  branch delete only when its commits are on another branch, and a squash
+  leaves them nowhere else.
+- After the merge, remove the branch everywhere: the forge branch (the flag
+  above), the worktree (`git worktree remove <path>`), the local branch
+  (`git branch -D <branch>`), then `git fetch --prune`. Keep a branch only
+  while another open pull request is based on it.
+- Deploy merged work through the repo's own deploy path (its CI job or
+  deploy script) unless the operator said not to in this session. Run the
+  repo's live check after it and report the result. When a deploy fails,
+  roll back by the repo's path and stop.
 
 ## Size the process to the work
 
@@ -176,6 +200,11 @@ exist, in a reviewed pull request whose text lists what goes, so that the operat
 
 ## Build work
 
+- A file over 5,000 tokens (bytes / 4) is allowed. When the gate says a
+  staged file is over the cap, open a refactor issue on the forge at high
+  priority (OneDev `Priority=Major`, GitHub label `priority: high`), unless
+  one is open for that file. The issue names the file and its size, and asks
+  for the split: one module for each concern, and tests in their own file.
 - Code that parses input from a stranger (mail, a file from outside, a request with no sign-in) gets one table
   test of bad input for each parser: a few rows, for the kinds that the threat model ranks high. Input from the
   signed-in operator needs only the test of its validation. Do not test each key, and do not run a fuzz campaign.

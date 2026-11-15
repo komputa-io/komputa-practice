@@ -21,13 +21,15 @@ Change them in the project template (komputa-practice).
   against its merge base. It never fails on them. How many tests a PR needs
   follows risk: see "Tests follow risk" in `komputa-practice`
   (`rules/working-rules.md`).
-- File size: `--fast` refuses a staged file over 5,000 tokens (bytes / 4). A
-  large file costs tokens on every later call of an agent that read it. Split
-  it: one module for each concern, and tests in their own file. Lock files,
-  generated code, test data and binary files do not count.
-  `.gate-size-baseline` lists the files that were over the cap when the repo
-  took up the check ("<tokens> <path>" on each line). A listed file may shrink
-  and never grow. `scripts/gate.sh --size-baseline` writes the list.
+- File size: `--fast` allows a staged file over 5,000 tokens (bytes / 4), and
+  asks for a refactor issue on the forge at high priority (OneDev
+  `Priority=Major`, GitHub label `priority: high`), unless one is open. A large
+  file costs tokens on every later call of an agent that read it. The refactor
+  splits it: one module for each concern, and tests in their own file. Lock
+  files, generated code, test data and binary files do not count.
+  `.gate-size-baseline` lists the files over the cap ("<tokens> <path>" on each
+  line); the gate adds a file at its new size, so it asks again only when the
+  file grows. `scripts/gate.sh --size-baseline` writes the list.
 - No hook runs on push. CI runs the full gate on the pull request.
 
 ## The repo's own checks

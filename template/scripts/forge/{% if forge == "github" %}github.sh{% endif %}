@@ -3,6 +3,8 @@
 # project template; scripts/update-deps.sh calls it.
 #   scripts/forge/github.sh check
 #       fail unless gh is on PATH and signed in (GH_TOKEN in CI)
+#   scripts/forge/github.sh open-update-pr
+#       print the number of an open PR from a chore/update-deps- branch, or nothing
 #   scripts/forge/github.sh pr-create BRANCH TITLE DESCRIPTION
 #       open a PR from BRANCH into the default branch; print its URL
 set -Eeuo pipefail
@@ -13,13 +15,20 @@ die() {
   exit 1
 }
 usage() {
-  printf 'usage: scripts/forge/github.sh check | pr-create BRANCH TITLE DESCRIPTION\n' >&2
+  printf 'usage: scripts/forge/github.sh check | open-update-pr | pr-create BRANCH TITLE DESCRIPTION\n' >&2
   exit 2
 }
 
 check() {
   command -v gh >/dev/null || die "install gh to open the PR"
   gh auth status >/dev/null 2>&1 || die "sign gh in (or set GH_TOKEN) to open the PR"
+}
+
+open_update_pr() {
+  check
+  gh pr list --state open --limit 100 --json number,headRefName \
+    --jq '[.[] | select(.headRefName | startswith("chore/update-deps-"))][0].number // empty' \
+    || die "could not list the open PRs, so cannot tell whether an update PR is waiting"
 }
 
 pr_create() {
@@ -31,6 +40,10 @@ case "${1-}" in
   check)
     (($# == 1)) || usage
     check
+    ;;
+  open-update-pr)
+    (($# == 1)) || usage
+    open_update_pr
     ;;
   pr-create)
     (($# == 4)) || usage

@@ -15,7 +15,7 @@ A program is a set of pull requests that one Claude Code session drives. The ses
 | 1. Plan | The session puts each pull request in a tier and states the size before the operator's go. | The tier table in the [rules](/reference/rules). |
 | 2. Build | The session builds one pull request on its own branch. It writes the tests that the risks need and runs the gate. | "Tests follow risk" in the rules, the [hooks](/reference/hooks) and `scripts/gate.sh`. |
 | 3. Verify | Tier 1: the session runs the real behaviour once. Tier 2 and up: a verifier subagent runs the acceptance checks on the real artifact and reads the diff. A finding counts only when a run shows it. | The tier table. |
-| 4. Merge | The session merges when every check passed at the head commit. A change to a live service waits for the operator's yes. | The checks at the head commit. |
+| 4. Merge | The session merges when every check passed at the head commit, deletes the branch and deploys, unless the operator said not to in this session. | Branch protection on the checks at the head commit. |
 | 5. Hand over | When the context nears 250k tokens, the session writes a handoff file. A fresh session starts from it, not from the old conversation. | The [watcher](/explanation/the-watcher) asks for the handoff when nobody watches, and starts the fresh session. |
 
 Steps 2 to 4 repeat for each pull request. The next one starts from the merged result, so each review stays small.
