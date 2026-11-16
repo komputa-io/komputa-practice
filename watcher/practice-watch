@@ -156,7 +156,7 @@ handover() { # handover FILE TERMINAL APPLY
     printf 'practice-watch: would take %s off the watch; to apply: practice-watch handover %s %s --apply\n' "$t" "$file" "$t"
     return 0
   fi
-  new=$("${hcc[@]}" run --json --bg --no-parent --cwd "$cwd" "${labels[@]}" -- "${argv[@]}" | jq -r '.address // ""') || new=
+  new=$("${hcc[@]}" run --json --bg --no-parent --cwd "$cwd" "${labels[@]}" --label "lead.from=$t" -- "${argv[@]}" | jq -r '.address // ""') || new=
   [[ -n $new ]] || die "hc run did not start the fresh session; $t stays on the watch"
   # A session that dies at start (a bad option, say) must not leave nobody on the watch.
   sleep "$start_wait"
@@ -166,7 +166,16 @@ handover() { # handover FILE TERMINAL APPLY
     die "the fresh session $new did not stay up (state ${state:-unknown}); $t stays on the watch"
   fi
   "${hcc[@]}" label "$t" watch= watch.nudges= watch.alerted= watch.handoff= lead= watch.old=1 >/dev/null
-  printf 'practice-watch: started %s from %s; %s is off the watch and no longer the lead, and closes after %s idle hours\n' "$new" "$file" "$t" "$close_h"
+  # hc cannot give a child a new parent (herdr-core #93), so the old one's workers learn the fresh one from lead.to, which
+  # report-to reads (and lead.from on the fresh one, for a worker this misses). Workers that reported to the old one move on too.
+  local c moved=0
+  while read -r c; do
+    "${hcc[@]}" label "$c" "lead.to=$new" >/dev/null && moved=$((moved + 1))
+  done < <({
+    "${hcc[@]}" ls --json | jq -r --arg t "$t" '.terminals[] | select(.parent == $t) | .address'
+    "${hcc[@]}" ls --label "lead.to=$t" --json | jq -r '.terminals[].address'
+  } | sort -u)
+  printf 'practice-watch: started %s from %s; %s is off the watch and no longer the lead, and closes after %s idle hours; %s workers now report to %s\n' "$new" "$file" "$t" "$close_h" "$moved" "$new"
 }
 
 # close_old APPLY: close each old session that has sat idle or done for close_h hours, unless it is needed again.

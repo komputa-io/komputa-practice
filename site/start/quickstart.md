@@ -82,9 +82,10 @@ You link the practice to one clone of its repo, so a `git pull` later updates th
    ~/Code/komputa-practice/hooks/check-live.sh
    ```
 
-   You see one line for each of the seven hooks, and the exit code is 0:
+   You see one line for each of the eight hooks, and the exit code is 0:
 
    ```text
+   in step: block-branch-name.sh
    in step: block-credential-read.sh
    in step: block-dangerous-git.sh
    in step: block-destructive-delete.sh

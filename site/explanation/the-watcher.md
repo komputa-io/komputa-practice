@@ -119,7 +119,15 @@ it, so `hc ls --label lead=1` finds the current lead even after several
 handovers.
 `practice-watch on` marks the lead too; `off` leaves it. The old session comes
 off the watch and is marked old (`watch.old=1`), so it can still pass on a
-report that arrives late. Once it has been idle for 3 hours (`WATCH_CLOSE_H`),
+report that arrives late.
+
+hc cannot move a worker to a new parent (herdr-core #93), so the old
+session's workers would go on reporting to it. The handover labels the fresh
+session `lead.from=<old>`, and each live worker of the old session (and each
+terminal already labelled `lead.to=<old>`) `lead.to=<fresh>`. A worker sends its
+reports to the address `~/.config/herdr-core/report-to` prints: its
+`lead.to`, else its parent; past an old or ended lead it follows `lead.from`,
+else the one live lead in that lead's folder. Once it has been idle for 3 hours (`WATCH_CLOSE_H`),
 a pass closes it with `hc kill` and `hc rm`, which also closes its pane. A
 pass leaves it open while a terminal it started still runs, or once it is on
 the watch or the lead again. Its transcript stays on disk

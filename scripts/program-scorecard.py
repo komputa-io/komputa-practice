@@ -7,7 +7,8 @@
 A pull request is a first-parent commit on the branch that names it: a merge commit "Merges PR #7 from fix-3"
 (OneDev) or "Merge pull request #7 from owner/fix-3" (GitHub), whose branch name gives the kind, or a squash
 commit "fix(verify): keep the pid (#7)", whose conventional-commit type gives the kind. The default kinds are
-build (pr-<n> or feat...), fix (fix...) and prune (prune...); each other name is "other". Lines are split by path:
+the branch kinds of hooks/block-branch-name.sh: build (feat... or pr-<n>), fix, docs, refactor,
+chore (chore... or ci...), perf, test and prune; each other name is "other". Lines are split by path:
 test (tests/, /tests/, .test.), source (under --src, default src/) and other. A path that matches --skip is left
 out (default: migrations, lock files and an `archive/` folder).
 
@@ -35,7 +36,17 @@ SUBJECT = re.compile(r"Merges PR #(\d+) from (\S+)|Merge pull request #(\d+) fro
 SQUASH = re.compile(r"\(#(\d+)\)$")
 # A squash merge keeps no branch name: "feat(today): …" gives "feat".
 TYPE = re.compile(r"^([a-z]+)(\([^)]*\))?!?:")
-KINDS = ["build=^pr-\\d|^feat", "fix=^fix", "prune=^prune"]
+# The branch kinds hooks/block-branch-name.sh enforces: <kind>/<name>. A feat branch is a build; pr-<n> is OneDev's.
+KINDS = [
+    "build=^pr-\\d|^feat",
+    "fix=^fix",
+    "docs=^docs",
+    "refactor=^refactor",
+    "chore=^chore|^ci",
+    "perf=^perf",
+    "test=^test",
+    "prune=^prune",
+]
 
 
 def git(repo, *args):
@@ -102,7 +113,12 @@ def main():
     args = parser.parse_args()
     skip = re.compile(args.skip)
     kinds = [(name, re.compile(rx)) for name, rx in (k.split("=", 1) for k in args.kind or KINDS)]
-    window = [f"--{k}={v}" for k, v in (("since", args.since), ("until", args.until)) if v]
+    # git reads a bare date ("2026-11-16") as that day at the current time of day; a window starts and ends at midnight.
+    window = [
+        f"--{k}={v}T00:00:00" if re.fullmatch(r"\d{4}-\d{2}-\d{2}", v) else f"--{k}={v}"
+        for k, v in (("since", args.since), ("until", args.until))
+        if v
+    ]
 
     rows = []
     commits = []

@@ -35,6 +35,12 @@
 # `git checkout --ours .` and `--theirs .` pass: they resolve a conflict. So
 # does `-p`, which asks a person about each change.
 #
+# A branch change (`git switch`, `git checkout <branch>`, `-b`, a detach) is
+# refused when hc lists another live claude-code or codex terminal whose folder
+# is in the same work tree (a linked worktree is its own). A path checkout
+# (`-- <path>`) and `git restore` pass. With no HC_TERMINAL_ID, no hc, or no
+# answer from hc in 3 s, it passes. The refusal names the terminal.
+#
 # Two layers judge these. A raw scan of the text refuses the plain spellings
 # wherever they appear, also in a variable-led command or a quoted message:
 # it fails safe, because it needs no parse. The word parse then catches what
@@ -90,7 +96,7 @@ COMMAND=$(str '.tool_input.command')
 CWD=$(str '.cwd')
 
 # The git commands this hook judges. A line with none of them is dropped early.
-GIT_WORDS='push|reset|clean|checkout|restore|branch'
+GIT_WORDS='push|reset|clean|checkout|restore|branch|switch'
 KEEP_LINE="$GIT_WORDS|^[ \\t{]*cd([ \\t]|\$)"
 
 # BEGIN shared parser. Both hooks hold this block. A test keeps them the same.
@@ -319,19 +325,56 @@ names_whole_tree() {
   return 1
 }
 
+# shared_checkout <dir> <subcommand> <word>...: prints why a branch change is
+# refused: another live agent terminal works in the same work tree. Prints
+# nothing for a command that keeps the branch (a path checkout, git restore),
+# with no HC_TERMINAL_ID, no hc, or an hc that is silent for 3 s.
+shared_checkout() {
+  local dir=$1 sub=$2 w top ref=0 addr agent cwd t
+  shift 2
+  local -a args=("$@")
+  for w in "${args[@]}"; do
+    [[ $w == -- ]] && return
+  done
+  if [[ $sub == switch ]]; then
+    ((${#args[@]})) && ref=1
+  else
+    for w in "${args[@]}"; do
+      if short_flag "$w" b || short_flag "$w" B; then ref=1; fi
+      if [[ $w != -* && $ref == 0 ]]; then
+        [[ -e $dir/$w ]] || ref=1
+        break
+      fi
+    done
+  fi
+  ((ref)) || return 0
+  [[ -n ${HC_TERMINAL_ID:-} ]] && command -v hc >/dev/null || return 0
+  top=$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null) || return 0
+  while IFS=$'\t' read -r addr agent cwd; do
+    [[ -n $cwd ]] || continue
+    t=$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null) || continue
+    if [[ $t == "$top" ]]; then
+      printf 'git %s changes the branch in %s, where terminal %s (%s) also works. Work in your own worktree: git worktree add ../<repo>-<name> -b <branch> origin/main\n' "$sub" "$top" "$addr" "$agent"
+      return
+    fi
+  done < <(timeout 3 hc ls --json 2>/dev/null | jq -r --arg me "$HC_TERMINAL_ID" \
+    '.terminals[]? | select(.state == "live" and .address != $me and (.agent == "claude-code" or .agent == "codex")) | [.address, .agent, .cwd] | @tsv' 2>/dev/null)
+}
+
 # destructive_git <dir> <subcommand> <word>...: prints why the command loses
 # work. Prints nothing when it does not.
 destructive_git() {
   local dir=$1 sub=$2 w delete=0 force=0 staged=0 worktree=0
   shift 2
   case $sub in
-    reset | clean | checkout | restore | branch) ;;
+    reset | clean | checkout | restore | branch | switch) ;;
     *) return ;;
   esac
   # A redirect can be glued to the word before it: --hard>/dev/null.
   local -a raw=("$@")
   set -- "${@%%[<>]*}"
   case $sub in
+    switch) shared_checkout "$dir" switch "$@" ;;
     reset)
       for w in "$@"; do
         if long_flag "$w" hard; then
@@ -352,7 +395,11 @@ destructive_git() {
       for w in "$@"; do
         if long_flag "$w" ours || long_flag "$w" theirs || long_flag "$w" patch || short_flag "$w" p; then return; fi
       done
-      names_whole_tree "$@" && printf 'git checkout of the whole tree discards uncommitted work\n'
+      if names_whole_tree "$@"; then
+        printf 'git checkout of the whole tree discards uncommitted work\n'
+      else
+        shared_checkout "$dir" checkout "$@"
+      fi
       ;;
     restore)
       for w in "$@"; do

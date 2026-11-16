@@ -62,13 +62,15 @@ add a check, add its row. When a mistake can no longer happen, drop its rule.
 | Rule | What holds it |
 |---|---|
 | A forced push uses a pinned lease | `hooks/block-dangerous-git.sh` refuses others |
+| A lead works in its own worktree when another session shares the checkout | `hooks/block-dangerous-git.sh` refuses a branch change there when `hc ls` shows another live agent terminal in the work tree |
 | No delete that cannot be undone | `hooks/block-destructive-delete.sh` refuses it |
+| Every branch is `<kind>/<name>` (kinds: feat fix docs refactor chore perf test ci prune; the issue number first when there is one) | `hooks/block-branch-name.sh` refuses a git command that makes or renames a branch with another name, this repo's CI judges each pull request's branch with the same hook, and the template's gate refuses a commit on such a branch and, on GitHub, the pull request; `scripts/program-scorecard.py` counts by these kinds |
 | No private item in this shareable repo | `scripts/scrub-check.sh`, in the git hooks and CI (CI reads each commit of a PR, and the denylist from the `SCRUB_DENYLIST` secret when set) |
 | Every check runs on every pull request | `scripts/check.sh`, in CI |
 | A merge needs green checks at the head | Branch protection on `main` requires the `check`, `template` and `docs` jobs |
 | A merged branch is deleted on the forge | The repo setting that deletes head branches on merge |
 | An operator command opens in a pane, not a `!` line | `skills/herdr/assets/operator-run.sh` refuses outside Herdr and is tested by `scripts/tests/operator-run.test.sh`; choosing it is prose |
-| A worker never blocks on a wait | `hooks/block-foreground-wait.sh` refuses a worker's foreground `gh pr checks --watch`, `gh run watch`, `merge-on-green`, `hc wait` and `sleep` over 10 s, and, in the background too, an `until` or `while true` loop with no `timeout`; `scripts/tests` and `hooks/block-foreground-wait.test.sh` test it. The owner template fixes the stages; choosing to run `stall-watch` is prose |
+| A worker never blocks on a wait | `hooks/block-foreground-wait.sh` refuses a worker's foreground `gh pr checks --watch`, `gh run watch`, `watch`, `odev pr checks --wait`, `merge-on-green`, `hc wait` and `sleep` over 10 s (also after `do`, `then`, `{`, `!` and inside `bash -c`), and, in the background too, an `until` or `while` loop that sleeps with no `timeout` command; `scripts/tests` and `hooks/block-foreground-wait.test.sh` test it. The owner template fixes the stages; choosing to run `stall-watch` is prose |
 | A PR's Deslop findings get a decision | The template's Duplicate code job fails while a duplicate the PR adds is neither fixed nor kept in `.deslop-decisions`; the template gate fails CI when the job no longer calls the check |
 | Every project keeps the CI pattern at its own slot | The template gate's shell section fails CI on drift; `scripts/audit-builds.py` lists every project and any shared schedule |
 | pstack for tier 2 and 3 work in an app or a command-line tool | The project's SessionStart hook reads `.claude/pstack-mandate.md`; the template gate fails CI when the hook is gone |
@@ -177,7 +179,8 @@ reply.
   tier 3 adversarial review is one reviewer, not a panel. One feature on pstack's full path starts ten or more agents, and each one rereads its context.
 - In an app or a command-line tool made from the template, pstack is on, scoped by tier: a tier 2 or 3 pull
   request runs pstack's poteto-mode for its plan, build and verification, with the subagents poteto-mode starts.
-  A tier 1 change stays in the session. Everywhere else, pstack runs only when the operator names it.
+  A tier 1 change stays in the session. Everywhere else, pstack runs only when the operator names it, and an owner
+  builds tier 1 and 2 in its session.
 
 ### Tests follow risk
 

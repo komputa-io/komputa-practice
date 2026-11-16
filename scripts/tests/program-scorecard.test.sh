@@ -8,6 +8,9 @@ trap 'rm -rf -- "$T"' EXIT
 FAIL=0 RUN=0
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t \
   GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t
+# Every commit at one second past midnight today, so a window that starts at today's date must reach back to it.
+midnight="$(date +%F)T00:00:01"
+export GIT_AUTHOR_DATE=$midnight GIT_COMMITTER_DATE=$midnight
 g() { git -C "$T/repo" "$@" >/dev/null; }
 put() { # put PATH LINES: write a file of LINES lines
   mkdir -p "$(dirname "$T/repo/$1")"
@@ -38,6 +41,10 @@ ok "a fix branch and a fix squash merge are fixes" '^fix +2 +4 +4 '
 ok "a commit with no pull request is not counted" '^other +0 '
 ok "each pull request names its practice version" 'v1\.1\.0 for 2 pull requests, v1\.2\.0 for 1 pull request$'
 ok "lead time counts the merge commit only" 'to its merge: [0-9.]+$'
+
+# git reads a bare date as that day at the current time of day; the window must start at midnight.
+out=$("$DIR/program-scorecard.py" --repo "$T/repo" --branch main --since "$(date +%F)" 2>&1)
+ok "a window from today's date counts today's pull requests" '^3 pull requests merged'
 
 echo "$RUN cases, $FAIL failed"
 ((FAIL == 0))

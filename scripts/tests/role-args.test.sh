@@ -2,6 +2,7 @@
 # Tests for skills/herdr/assets/role-args.sh: the sheet's rules, and a template's command starting claude with them.
 #   scripts/tests/role-args.test.sh
 set -Eeuo pipefail
+unset HC_TERMINAL_ID # the script reads the label of the terminal it runs in; a test must not
 
 here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 repo=$(cd -- "$here/../.." && pwd)

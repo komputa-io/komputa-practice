@@ -394,7 +394,7 @@ def test_a_linked_worktree_gets_the_hooks_for_itself_only(tmp_path, capfd):
         "start",
     )
     wt = tmp_path / "wt"
-    git(main, "worktree", "add", "-q", str(wt))
+    git(main, "worktree", "add", "-q", "-b", "feat/wt", str(wt))
     capfd.readouterr()
     render(wt, ["shell"])
     # git config --worktree fails until the task turns worktreeConfig on; that
@@ -430,7 +430,7 @@ def test_the_pre_commit_hook_passes_in_a_linked_worktree_with_a_project_folder(
     _repo(main)
     git(main, "commit", "-q", "--allow-empty", "-m", "start")
     wt = tmp_path / "wt"
-    git(main, "worktree", "add", "-q", str(wt))
+    git(main, "worktree", "add", "-q", "-b", "feat/wt", str(wt))
     render(wt, [language, "shell"], **answer)
     git(wt, "add", "-A")
     git(wt, "commit", "-q", "--no-verify", "-m", "init")
@@ -519,6 +519,28 @@ def test_the_gate_shell_checks_only_files_whose_shebang_names_a_shell(tmp_path):
     subprocess.run(["git", "-C", str(out), "add", "-A"], check=True)
     gate = run_gate(out)
     assert gate.returncode == 0, gate.stdout + gate.stderr
+
+
+def test_the_gate_refuses_a_branch_not_named_kind_slash_name(tmp_path, monkeypatch):
+    monkeypatch.delenv("GITHUB_HEAD_REF", raising=False)
+    out = render(tmp_path / "p", ["shell"])
+    _repo(out)
+    git(out, "add", "-A")
+    git(out, "commit", "-q", "--no-verify", "-m", "init")
+    for branch, mode, ok in (
+        ("sitrep-live/fresh-sign-in", "--fast", False),
+        ("fix/312-spec-drift", "--fast", True),
+        ("Feature/X", "--full", False),
+        ("dependabot/npm/vite-8", "--full", True),
+    ):
+        git(out, "switch", "-q", "-c", branch)
+        gate = run_gate(out, mode)
+        assert (gate.returncode == 0) == ok, (branch, gate.stdout + gate.stderr)
+        assert ("is not <kind>/<name>" in gate.stderr) != ok, branch
+    # In CI the checkout is a detached merge preview: GITHUB_HEAD_REF names the branch.
+    git(out, "switch", "-q", "--detach")
+    monkeypatch.setenv("GITHUB_HEAD_REF", "template/deslop")
+    assert run_gate(out, "--only", "shell").returncode != 0
 
 
 def test_the_fast_gate_refuses_a_staged_file_with_more_changes_on_disk(tmp_path):
@@ -1565,7 +1587,7 @@ def _scoped(tmp_path: Path, languages: list[str] | None = None, **extra: object)
     (out / "scripts/gate.local.sh").chmod(0o755)
     git(out, "add", "-A")
     git(out, "commit", "-q", "--no-verify", "-m", "init")
-    git(out, "checkout", "-q", "-b", "feat")
+    git(out, "checkout", "-q", "-b", "feat/x")
     return out
 
 
@@ -1608,8 +1630,8 @@ def test_ci_scopes_a_merge_preview_by_its_first_parent(tmp_path):
     out = _scoped(tmp_path, ["python", "shell"])
     _commit_file(out, "docs/notes.md", "notes\n")
     git(out, "checkout", "-q", "--detach", "main")
-    git(out, "merge", "-q", "--no-ff", "--no-verify", "-m", "preview", "feat")
-    git(out, "branch", "-q", "-D", "main", "feat")
+    git(out, "merge", "-q", "--no-ff", "--no-verify", "-m", "preview", "feat/x")
+    git(out, "branch", "-q", "-D", "main", "feat/x")
     gate = subprocess.run(
         [str(out / "scripts/gate.sh"), "--only", "python"],
         cwd=out,
@@ -1626,7 +1648,7 @@ def test_ci_runs_a_touched_section_when_head_parent_is_not_the_base(tmp_path):
     _commit_file(out, "app.py", "x = 1\n")
     git(out, "checkout", "-q", "main")
     _commit_file(out, "docs/other.md", "other\n")
-    git(out, "checkout", "-q", "feat")
+    git(out, "checkout", "-q", "feat/x")
     git(out, "merge", "-q", "--no-verify", "-m", "merge main into feat", "main")
     env = {**os.environ, "CI": "1", "GATE_BASE": "main"}
     gate = subprocess.run(
@@ -1787,7 +1809,7 @@ def _slow_local(tmp_path: Path, seconds: int, **extra: object) -> Path:
     (out / "scripts/gate.local.sh").chmod(0o755)
     git(out, "add", "-A")
     git(out, "commit", "-q", "--no-verify", "-m", "init")
-    git(out, "checkout", "-q", "-b", "feat")
+    git(out, "checkout", "-q", "-b", "feat/x")
     return out
 
 
@@ -1858,7 +1880,7 @@ def test_the_defaults_are_the_issue_budgets(tmp_path):
 
 def test_the_gate_prints_source_lines_against_test_lines_and_never_fails(tmp_path):
     out = _python_tested(tmp_path, test_folders=["spec"])
-    git(out, "checkout", "-q", "-b", "feat")
+    git(out, "checkout", "-q", "-b", "feat/x")
     (out / "app/new.py").write_text("A = 1\nB = 2\n")
     (out / "tests/test_new.py").write_text("".join(f"T{i} = {i}\n" for i in range(6)))
     (out / "spec").mkdir()

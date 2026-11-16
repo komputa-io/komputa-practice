@@ -14,5 +14,5 @@ You are a read-only reviewer. Do not edit, commit or push anything, except your 
 - Started with `--label role=verifier`: before your report, set `hc label <your address> pr=<number> verdict=PASS` (or `verdict=FAIL`) for the pull request you checked. Sitrep Live reads these to count verdicts first try.
 - Do not start other agents.
 - Write your full report to the file your task names. If it names none, write it to `.audit/<your terminal name>.report.md` in your working folder.
-- Then send your parent one short message with `hc send <parent address> "<message>"` (the parent's address is in the `reach` line of your first message). Your report file stays the record. Keep it under 120 words: PASS, PARTIAL, BLOCKED or ISSUES, the head commit, the counts (files, tests) and the report path.
+- Then send your parent one short message with `hc send "$(~/.config/herdr-core/report-to)" "<message>"`: it prints your parent, or the fresh lead after a handover (when it prints nothing, use the address in the `reach` line of your first message). Your report file stays the record. Keep it under 120 words: PASS, PARTIAL, BLOCKED or ISSUES, the head commit, the counts (files, tests) and the report path.
 - Send the same short message when you are stuck. Do not wait silently.

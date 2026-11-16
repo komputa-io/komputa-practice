@@ -133,7 +133,7 @@ passes 'rm -rf ~/Code/{1..3}'
 blocks 'rm -rf ~/Code/*'
 blocks 'rm -rf ../s*'
 blocks 'rm -rf ../[s]ib'
-passes 'rm -rf ../nomatch*'
+blocks 'rm -rf ../nomatch*' # a glob outside the checkout, matched or not
 
 # cd, pushd, env -C and git -C earlier in the same command.
 blocks "cd $home/Code && rm -rf sib"
@@ -401,6 +401,13 @@ check 2 "$(bigpl 'rm -rf ' 6000)"
 check 2 "$(bigpl 'rm -rf ' 3000 "$home/Code/sib")"
 check 2 "$(bigpl 'git rm -rf ' 6000)"
 check 0 "$(bigpl 'rm ' 6000)"
+
+# A glob outside the checkout and the session folder (the 2026-11-16 incident); the
+# allowed cases beside it keep agents moving.
+for c in "rm -f $tmpd/x[0-9]*" "rm $tmpd/*.log" 'rm -f ~/notes/*.md' "rm -rf $home/Code/sib/build/*" \
+  'rm -f $TMPDIR/x*' 'rm -f "$TMPDIR"/x*' 'cd "$TMPDIR" && rm -f x*' 'rm -f ~nosuchuser/x*' 'rm -f /tmp/{x,y}[0-9]*' \
+  'rm -rf /tmp/{a,b}*' 'rm -f /tmp/x{1,2}*' 'rm -f "/tmp/x*" /tmp/x*' 'rm -f /tmp/x* && echo "/tmp/x*"'; do blocks "$c"; done
+for c in 'rm -f build/*.o' "rm -f $work/build/*.o" "rm -f $scratch/*.tmp" "rm -f $tmpd/x685579" "rm -f '$tmpd/x*'" 'rm -f "/tmp/x*"'; do passes "$c"; done
 
 grep -q "internal error" "$root/stderr" && {
   echo "FAIL the gate failed inside:"

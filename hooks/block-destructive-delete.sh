@@ -21,6 +21,10 @@
 #    `git -C` folder.
 #  - A recursive rm of a `.git` folder or anything under one, anywhere, the
 #    current checkout included: it holds the commits that were never pushed.
+#  - Any rm (recursive or not) with an unquoted glob (*, ? or [...]) whose
+#    pattern lies outside the current checkout and this session's own folder
+#    (`rm -f /tmp/x[0-9]*` once removed a file the agent had not made). Delete
+#    only files you made, each by its exact path.
 #  The target is resolved first: `cd` and `pushd` earlier in the same
 #  command, `env -C`, `git -C`, `~`, `~user`, `$HOME`, `${HOME}`, `..`,
 #  symlinked parents (and the link itself when the path ends in `/`), {a,b}
@@ -34,7 +38,9 @@
 #    <tmp>/claude-<uid>/<transcript folder>/<session_id>/, built from the
 #    payload's transcript_path and session_id (<tmp> is $CLAUDE_CODE_TMPDIR,
 #    else /tmp). It holds the session's scratchpad.
-#  - A non-recursive rm; a recursive rm of any other path (a temp folder, a
+#  - A glob inside the checkout or the session's own folder, a quoted glob
+#    (a literal name) and an exact path anywhere.
+#  - A non-recursive rm without a glob; a recursive rm of any other path (a temp folder, a
 #    folder inside a sibling checkout, a deep folder under home); and a
 #    symlink named without a trailing `/` (rm removes the link only).
 #  - `/`, home itself, the working folder and its parents. Claude Code's own
@@ -418,6 +424,31 @@ judge_target() {
 
 MAX_TARGETS=5000
 
+# glob_outside <word>...: refuses an unquoted glob whose pattern lies outside the
+# checkout and this session's folder (the shell would expand it over files the
+# agent did not make). A quoted glob names a literal file, so it passes. The
+# parser strips quotes, so a word counts as quoted when the command holds it
+# wrapped in quotes; a word that is quoted in one place and bare in another, or that
+# cannot be resolved ($VAR, an unknown ~user, a relative path after an unknown cd), is refused.
+glob_outside() {
+  local w x abs pre rest
+  for x in "$@"; do
+    while IFS= read -r w; do
+      [[ $w == *[*?[]* ]] || continue
+      rest=${COMMAND//"'$w'"/}
+      rest=${rest//"\"$w\""/}
+      [[ $rest != "$COMMAND" && $rest != *"$w"* ]] && continue
+      expand_path_r "$dir" "$w" || refuse "a glob that cannot be resolved" "rm $w. Delete only files you made, each by its exact path"
+      pre=${REPLY%%[*?[]*}
+      pre=${pre%/*}
+      abs=$(realpath -m -- "${pre:-/}")
+      [[ -n $SESSION_DIR ]] && inside "$abs" "$SESSION_DIR" && continue
+      [[ -n $CHECKOUT ]] && inside "$abs" "$CHECKOUT" && continue
+      refuse "a glob outside the checkout" "rm $w. Delete only files you made, each by its exact path"
+    done < <(braces "${x%%[<>]*}")
+  done
+}
+
 # rm_args <dir> <word>...: the words after rm (or git rm). Judges each
 # target when the delete is recursive.
 rm_args() {
@@ -443,6 +474,7 @@ rm_args() {
       recursive=1
     fi
   done
+  glob_outside "${targets[@]}"
   ((recursive)) || return
   # The check costs time for each target. A hook that outlasts its timeout lets the delete run, so a list this long
   # is refused: the operator runs it by hand (issue #21). 5,000 targets take about 1 s; 50,000 took minutes.

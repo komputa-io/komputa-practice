@@ -23,6 +23,8 @@ export default defineConfig({
     },
   },
   navigation: {
+    // The way to hire us from every page: a stranger who likes what they read reaches komputa.io.
+    cta: { label: "Work with Komputa", href: "https://komputa.io" },
     // A tab is added with its first page. docs:smoke checks each tab root.
     tabs: [
       { label: "Get started", path: "/start", icon: "rocket" },

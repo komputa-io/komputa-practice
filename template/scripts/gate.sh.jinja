@@ -123,6 +123,22 @@ if [[ "$mode" != fast ]]; then
   ref=${ref#refs/remotes/}
 fi
 
+# Every branch is <kind>/<name>, so pull requests can be counted by kind: kinds feat fix docs refactor chore perf test
+# ci prune, then lower-case words joined by -, the issue number first when there is one (fix/312-spec-drift). Bots name
+# their own (dependabot/, renovate/). The branch: GATE_BRANCH, else a GitHub pull request's, else the one checked out.
+# main, master and a detached checkout (a CI merge preview) are not judged. It runs on each commit (--fast) and in CI
+# wherever the shell section runs. komputa-practice holds the same rule in hooks/block-branch-name.sh.
+if [[ "$mode" == fast || " ${only[*]} " == *" shell "* ]]; then
+  branch=${GATE_BRANCH:-${GITHUB_HEAD_REF:-$(git symbolic-ref --quiet --short HEAD 2>/dev/null || true)}}
+  kinds='feat|fix|docs|refactor|chore|perf|test|ci|prune'
+  if [[ -n "$branch" && "$branch" != main && "$branch" != master ]] \
+    && ! [[ "$branch" =~ ^(($kinds)/[a-z0-9]+([.-][a-z0-9]+)*|(dependabot|renovate)/.+)$ ]]; then
+    printf "gate: branch '%s' is not <kind>/<name>. Use one of %s, then lower-case words joined by -, with the issue number first when there is one: fix/312-spec-drift. Rename it: git branch -m <kind>/<name>\n" \
+      "$branch" "${kinds//|/ }" >&2
+    exit 1
+  fi
+fi
+
 # section_of PATH: the sections that a change to PATH can break, or "none" for
 # a path no section reads (docs), or "?" for a path with no safe mapping.
 section_of() {

@@ -14,6 +14,7 @@ case $1 in
   ls)
     [[ -n ${STUB_LS-} ]] || exit 1
     case $* in
+      *lead.to=*) printf '%s' "${STUB_LS_LEADTO:-{\"terminals\":[]\}}" ;;
       *watch.old=1*) printf '%s' "${STUB_LS_OLD:-{\"terminals\":[]\}}" ;;
       *watch=on*) printf '%s' "$STUB_LS" ;;
       *) printf '%s' "${STUB_LS_LIVE:-$STUB_LS}" ;;
@@ -119,8 +120,14 @@ fg=$(jq -nc '{state:"live", cwd:"/shell", foreground:{argv:["claude","--permissi
 STUB_GET=$fg watch handover "$T/handoff.md" t7
 ok "a handover dry run starts nothing" not_logged '^run'
 STUB_GET=$fg watch handover "$T/handoff.md" t7 --apply
-ok "handover starts the fresh session as the lead, with only the new handoff" logged "^run --json --bg --no-parent --cwd /repo --label watch=on --label lead=1 --label herdr.space=sp1 --label herdr.tab=tb1 -- claude --permission-mode x Continue the work from the handoff at $T/handoff.md. Read it first. This session is on the practice watch.$"
+ok "handover starts the fresh session as the lead, with only the new handoff" logged "^run --json --bg --no-parent --cwd /repo --label watch=on --label lead=1 --label herdr.space=sp1 --label herdr.tab=tb1 --label lead.from=t7 -- claude --permission-mode x Continue the work from the handoff at $T/handoff.md. Read it first. This session is on the practice watch.$"
 ok "handover takes the old session off the watch and the lead, and marks it old" logged '^label t7 watch= watch.nudges= watch.alerted= watch.handoff= lead= watch.old=1$'
+# The old session's workers, and those that already reported to it, now report to the fresh one (#331).
+STUB_LS_LIVE='{"terminals":[{"address":"t9","parent":"t7"},{"address":"t5","parent":"t3"}]}' STUB_LS_LEADTO='{"terminals":[{"address":"t4"}]}' \
+  STUB_GET=$fg watch handover "$T/handoff.md" t7 --apply
+ok "handover points the old session's workers at the fresh one" logged '^label t9 lead.to=t8$'
+ok "handover moves workers that reported to the old session" logged '^label t4 lead.to=t8$'
+ok "handover leaves another lead's workers alone" not_logged '^label t5'
 STUB_RUN_FAIL=1 STUB_GET=$fg watch handover "$T/handoff.md" t7 --apply
 ok "a failed start leaves the old session on the watch" not_logged '^label t7'
 ok "a failed start says so" grep -q 'did not start the fresh session' "$T/out"
@@ -128,7 +135,7 @@ ok "a failed start says so" grep -q 'did not start the fresh session' "$T/out"
 # prompt that starts with - broke the 09:03 handover of 13 Nov: claude read it as an unknown option and exited.
 launched=$(jq -nc '{state:"live", foreground:{argv:["claude","--model","sonnet","--permission-mode","bypassPermissions","--resume","abc-123","Plan Sitrep Live as a program.","- The spec (draft 4): x"], cwd:"/repo"}, labels:{}}')
 STUB_GET=$launched STUB_GET_t8='{"state":"live"}' watch handover "$T/handoff.md" t7 --apply
-ok "handover keeps the options and their values, and drops the old prompt and the resume" logged "^run --json --bg --no-parent --cwd /repo --label watch=on --label lead=1 -- claude --model sonnet --permission-mode bypassPermissions Continue the work from the handoff at $T/handoff.md. Read it first. This session is on the practice watch.$"
+ok "handover keeps the options and their values, and drops the old prompt and the resume" logged "^run --json --bg --no-parent --cwd /repo --label watch=on --label lead=1 --label lead.from=t7 -- claude --model sonnet --permission-mode bypassPermissions Continue the work from the handoff at $T/handoff.md. Read it first. This session is on the practice watch.$"
 STUB_GET=$launched STUB_GET_t8='{"state":"finished","exit_code":1}' STUB_READ="error: unknown option '- The spec'" watch handover "$T/handoff.md" t7 --apply
 ok "a fresh session that dies at start leaves the old session on the watch" not_logged '^label t7'
 ok "a fresh session that dies at start says so, with what it said" grep -q "did not stay up.*t7 stays on the watch" "$T/out"

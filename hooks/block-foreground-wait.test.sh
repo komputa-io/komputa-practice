@@ -44,6 +44,20 @@ check 2 1 'while true; do curl -s localhost; sleep 5; done' true
 check 0 1 'timeout 600 bash -c '"'"'until gh pr checks 311 | grep -q pass; do sleep 5; done'"'"'' true
 check 0 1 'for i in $(seq 1 60); do gh pr checks 311 | grep -q pass && break; sleep 5; done' true
 check 0 1 'while IFS= read -r l; do echo "$l"; done < file' true
+check 2 1 'timeout 1800 bash -c '"'"'until odev pr checks 12 | grep -q green; do sleep 30; done'"'"''
+check 2 1 'while ! gh pr checks 12; do sleep 30; done'
+check 2 1 'for i in 1 2 3; do sleep 30; done'
+check 2 1 '{ sleep 120; }'
+check 2 1 'if true; then sleep 300; fi'
+check 2 1 'bash -c "sleep 120"'
+check 2 1 'watch -n 30 gh pr checks 12'
+check 2 1 'odev pr checks 12 --head abc --wait --timeout 1800'
+check 2 1 'hc run --name ci -- gh run watch 123'
+check 2 1 'while ! gh pr checks 12; do sleep 30; done' true
+check 2 1 'until gh pr checks 12; do sleep 30; done # timeout later' true
+check 0 1 'echo "sleep 40 and gh run watch"'
+check 0 1 'for i in 1 2 3; do sleep 5; done'
+check 0 1 'timeout 600 bash -c '"'"'while ! gh pr checks 12; do sleep 30; done'"'"'' true
 check 0 0 'gh pr checks 311 --watch'
 check 0 0 'until false; do sleep 1; done' true
 if ((FAIL == 0)); then echo "block-foreground-wait: $RUN checks passed"; else

@@ -392,6 +392,28 @@ if [[ $got != 0 ]] || awk -v t="$cpu" 'BEGIN { split(t, a, " "); exit !(a[1] + a
   FAIL=1
 fi
 
+# A branch change is refused when another live agent terminal works in the same work tree.
+stub=$repo/stub
+mkdir -p "$stub"
+git -C "$repo/work" worktree add -q "$repo/wt" -b wtb main
+cat >"$stub/hc" <<STUB
+#!/bin/bash
+echo '{"terminals":[{"address":"t9","agent":"claude-code","cwd":"'"\$HC_STUB_CWD"'","state":"live"},{"address":"me","agent":"claude-code","cwd":"$repo/work","state":"live"}]}'
+STUB
+chmod +x "$stub/hc"
+sw() { # sw <want> <other's cwd> <command> [HC_TERMINAL_ID]
+  HC_STUB_CWD=$2 HC_TERMINAL_ID=${4-me} PATH=$stub:$PATH check "$1" block-dangerous-git.sh "$(git_cmd "$3")"
+}
+sw 2 "$repo/work" 'git checkout -b x'
+sw 2 "$repo/work/." 'git switch other'
+sw 2 "$repo/work" 'git checkout other'
+sw 0 "$repo/wt" 'git checkout -b x'
+sw 0 "$repo/nowhere" 'git checkout -b x'
+sw 0 "$repo/work" 'git checkout -b x' ''
+sw 0 "$repo/work" 'git checkout -- file'
+sw 0 "$repo/work" 'git checkout main -- file'
+sw 0 "$repo/work" 'git restore file'
+
 # Both hooks hold one copy of the shell parser. Change it in both.
 shared() { sed -n '/^# BEGIN shared parser/,/^# END shared parser/p' "$DIR/$1"; }
 if [[ -z $(shared block-dangerous-git.sh) ]] \
