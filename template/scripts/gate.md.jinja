@@ -36,7 +36,7 @@ Change them in the project template (komputa-practice).
   test ci prune`; the name is lower-case words joined by `-`, with the issue number first when there
   is one (`fix/312-spec-drift`). `--fast` refuses a commit on a branch named otherwise, and CI refuses
   the pull request where the forge names its branch (GitHub's `GITHUB_HEAD_REF`; set `GATE_BRANCH` for
-  another forge). `main`, `master`, bot branches (`dependabot/`, `renovate/`) and a detached checkout
+  another forge). The default branch (`{{ default_branch }}`), `main`, `master`, bot branches (`dependabot/`, `renovate/`) and a detached checkout
   pass. Rename a branch with `git branch -m <kind>/<name>`.
 - No hook runs on push. CI runs the full gate on the pull request.
 - The build spec is seeded once and then belongs to the repo, so `copier update`

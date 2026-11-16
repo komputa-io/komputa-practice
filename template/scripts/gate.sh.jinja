@@ -103,7 +103,7 @@ rust_dir='{{ rust_dir }}'
 {%- endif %}
 
 # The merge base that the bare command compares with: GATE_BASE
-# (default origin's default branch, else main). Empty when there is none, or
+# (default origin's default branch, else {{ default_branch }}). Empty when there is none, or
 # in a fast run, which reads no diff.
 base=
 ref=${GATE_BASE-}
@@ -112,7 +112,7 @@ if [[ "$mode" != fast ]]; then
     # A full ref name: a tag or branch called "main" cannot shadow it.
     ref=$(git symbolic-ref --quiet refs/remotes/origin/HEAD 2>/dev/null) || ref=
     if [[ -z "$ref" ]]; then
-      for ref in refs/remotes/origin/main refs/heads/main; do
+      for ref in refs/remotes/origin/{{ default_branch }} refs/heads/{{ default_branch }}; do
         git rev-parse --verify --quiet "$ref^{commit}" >/dev/null && break
         ref=
       done
@@ -126,12 +126,12 @@ fi
 # Every branch is <kind>/<name>, so pull requests can be counted by kind: kinds feat fix docs refactor chore perf test
 # ci prune, then lower-case words joined by -, the issue number first when there is one (fix/312-spec-drift). Bots name
 # their own (dependabot/, renovate/). The branch: GATE_BRANCH, else a GitHub pull request's, else the one checked out.
-# main, master and a detached checkout (a CI merge preview) are not judged. It runs on each commit (--fast) and in CI
+# The default branch, main, master and a detached checkout (a CI merge preview) are not judged. It runs on each commit (--fast) and in CI
 # wherever the shell section runs. komputa-practice holds the same rule in hooks/block-branch-name.sh.
 if [[ "$mode" == fast || " ${only[*]} " == *" shell "* ]]; then
   branch=${GATE_BRANCH:-${GITHUB_HEAD_REF:-$(git symbolic-ref --quiet --short HEAD 2>/dev/null || true)}}
   kinds='feat|fix|docs|refactor|chore|perf|test|ci|prune'
-  if [[ -n "$branch" && "$branch" != main && "$branch" != master ]] \
+  if [[ -n "$branch" && "$branch" != main && "$branch" != master && "$branch" != {{ default_branch }} ]] \
     && ! [[ "$branch" =~ ^(($kinds)/[a-z0-9]+([.-][a-z0-9]+)*|(dependabot|renovate)/.+)$ ]]; then
     printf "gate: branch '%s' is not <kind>/<name>. Use one of %s, then lower-case words joined by -, with the issue number first when there is one: fix/312-spec-drift. Rename it: git branch -m <kind>/<name>\n" \
       "$branch" "${kinds//|/ }" >&2
@@ -469,6 +469,12 @@ fi
 # baseline and leaves the tree as it found it. It runs in the shell section.
 # secret_scan FILE...: fail the gate on a possible secret.
 secret_scan() {
+  # The baseline holds the findings already reviewed, so it is never scanned: a
+  # change to it would fail on the very lines it lists. Every list passes here.
+  local f args=()
+  for f in "$@"; do [[ "$f" == .secrets.baseline ]] || args+=("$f"); done
+  set -- "${args[@]}"
+  (($# > 0)) || return 0
   local scan=(uvx --quiet --exclude-newer "7 days" --from detect-secrets detect-secrets-hook)
   local base_file=.secrets.baseline before
   # A OneDev reference such as @secret:NAME@ names a job secret; it is not one.
@@ -655,7 +661,7 @@ if [[ -n "${want[shell]-}" ]]; then
     fi
     present=()
     for f in "${list[@]}"; do
-      if [[ -f "$f" ]]; then present+=("$f"); fi
+      if [[ -f "$f" && "$f" != .secrets.baseline ]]; then present+=("$f"); fi
     done
     if [[ -n "${present[*]}" ]]; then
       timed secret-scan secret_scan "${present[@]}"
@@ -668,6 +674,7 @@ if [[ -n "${want[shell]-}" ]]; then
         mapfile -d '' -t list < <(git diff-tree -r -z --no-commit-id --name-only --diff-filter=d "$c")
         have=()
         for f in "${list[@]}"; do
+          [[ "$f" != .secrets.baseline ]] || continue
           blob=$(git rev-parse "$c:$f")
           [[ "$seen" != *" $blob "* ]] || continue
           seen+="$blob "
@@ -730,6 +737,9 @@ if [[ -n "${want[shell]-}" ]]; then
     spec=.onedev-buildspec.yml
     # job_block NAME: the lines of the job NAME, up to the next job.
     job_block() { awk -v want="- name: $1" '/^- name: /{on = ($0 == want)} on' "$spec"; }
+    # pr_jobs: the lines of every job that pull requests run (a PullRequestUpdateTrigger),
+    # whatever its name: a project may split CI into jobs of its own.
+    pr_jobs() { awk '/^- name: /{if (blk ~ /PullRequestUpdateTrigger/) printf "%s", blk; blk = ""} {blk = blk $0 "\n"} END{if (blk ~ /PullRequestUpdateTrigger/) printf "%s", blk}' "$spec"; }
     pattern=(
       'Duplicate code|PullRequestUpdateTrigger'
       'Duplicate code|scripts/deslop-decisions\.sh'
@@ -737,7 +747,7 @@ if [[ -n "${want[shell]-}" ]]; then
       "Update dependencies|cronExpression: 0 {{ weekly_minute }} {{ weekly_hour }} \? \* {{ ['MON','TUE','WED','THU','FRI','SAT','SUN'][weekly_day] }}"
       # Later fixes depend on these gate-step lines. A template PR that adds a
       # scripts/gate.sh call to the spec adds its pattern here (a test holds it).
-      'CI|git fetch --quiet origin'
+      'PR|git fetch --quiet origin'
 {%- set sections = [] -%}
 {%- for l in ['python', 'dotnet', 'typescript', 'rust'] if l in languages -%}{%- set _ = sections.append(l) -%}{%- endfor -%}
 {#- One pattern for each gate step, so that dropping CI=true or $FULL from one step fails. -#}
@@ -748,7 +758,7 @@ if [[ -n "${want[shell]-}" ]]; then
 {%- set gate_calls = ['scripts/gate\\.sh --full'] -%}
 {%- endif %}
 {%- for call in gate_calls %}
-      'CI|{{ call }}'
+      'PR|{{ call }}'
 {%- endfor %}
 {%- if trust_green_ci %}
       'CI on main|Trust a green CI build'
@@ -760,10 +770,21 @@ if [[ -n "${want[shell]-}" ]]; then
     )
     for want in "${pattern[@]}"; do
       # grep reads all of the block (no -q): an early exit kills awk with SIGPIPE, and pipefail then reports a match as a miss.
-      # shellcheck disable=SC2310 # the status is the answer.
-      if ! [[ -f "$spec" ]] || ! job_block "${want%%|*}" | grep -E -- "${want#*|}" >/dev/null; then
-        printf 'gate: %s needs the job "%s" with %s, as the template seeds it (schedule_slot {{ schedule_slot }})\n' \
-          "$spec" "${want%%|*}" "${want#*|}" >&2
+      ok=0
+      if [[ ! -f "$spec" ]]; then
+        job="the job \"${want%%|*}\""
+      elif [[ "${want%%|*}" == PR ]]; then
+        job='a job that pull requests run'
+        # shellcheck disable=SC2310 # the status is the answer.
+        if pr_jobs | grep -E -- "${want#*|}" >/dev/null; then ok=1; fi
+      else
+        job="the job \"${want%%|*}\""
+        # shellcheck disable=SC2310 # the status is the answer.
+        if job_block "${want%%|*}" | grep -E -- "${want#*|}" >/dev/null; then ok=1; fi
+      fi
+      if ((! ok)); then
+        printf 'gate: %s needs %s with %s, as the template seeds it (schedule_slot {{ schedule_slot }})\n' \
+          "$spec" "$job" "${want#*|}" >&2
         hits=$((hits + 1))
       fi
     done

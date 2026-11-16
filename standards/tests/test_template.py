@@ -693,6 +693,51 @@ def test_the_ci_gate_fails_on_a_key_added_and_removed_in_the_branch(tmp_path):
     assert gate.returncode != 0 and "possible secret" in gate.stderr, gate.stdout + gate.stderr
 
 
+def test_the_ci_gate_passes_a_branch_whose_commit_refreshed_the_baseline(tmp_path):
+    # The fast gate stages .secrets.baseline when a known finding's line moves. The full gate
+    # scans a copy of the baseline, so it must not also scan the real file as a changed one:
+    # detect-secrets reads its hashes as new secrets, and every such branch failed CI.
+    out = render(tmp_path / "p", ["shell"])
+    _repo(out)
+    (out / "conf.txt").write_text('token = "AKIA' + 'IOSFODNN7EXAMPLE"\n')
+    git(out, "add", "-A")
+    scan = subprocess.run(
+        [
+            "uvx",
+            "--quiet",
+            "--exclude-newer",
+            "7 days",
+            "--from",
+            "detect-secrets",
+            "detect-secrets",
+            "scan",
+        ],
+        cwd=out,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    (out / ".secrets.baseline").write_text(scan.stdout)
+    git(out, "add", "-A")
+    git(out, "commit", "-q", "--no-verify", "-m", "init")
+    (out / "conf.txt").write_text('# a\n# b\ntoken = "AKIA' + 'IOSFODNN7EXAMPLE"\n')
+    git(out, "add", "conf.txt")
+    fast = run_gate(out, "--fast")
+    assert (
+        fast.returncode == 0
+        and ".secrets.baseline" in git(out, "diff", "--cached", "--name-only").split()
+    ), fast.stderr
+    git(out, "commit", "-q", "--no-verify", "-m", "move the known key")
+    gate = subprocess.run(
+        [str(out / "scripts/gate.sh"), "--full"],
+        cwd=out,
+        capture_output=True,
+        text=True,
+        env={**os.environ, "CI": "1", "GATE_BASE": "HEAD~1"},
+    )
+    assert gate.returncode == 0, gate.stdout + gate.stderr
+
+
 def run_gate(out: Path, *args: str) -> subprocess.CompletedProcess[str]:
     """Run the gate. Without a mode flag it runs in full, as CI does; run_scoped has the bare command."""
     if not {"--full", "--fast"} & set(args):
@@ -2484,9 +2529,9 @@ def test_the_full_gate_fails_when_an_app_loses_its_pstack_hook(tmp_path):
 
 SPEC_DROPS = [
     # (languages, answers, text to cut from the spec, job the message names)
-    (["shell"], {}, "git fetch --quiet origin", '"CI"'),
-    (["shell"], {}, "scripts/gate.sh --full", '"CI"'),
-    (["shell"], {"trust_green_ci": True}, "Trust a green CI build", '"CI on main"'),
+    (["shell"], {}, "git fetch --quiet origin", "a job that pull requests run"),
+    (["shell"], {}, "scripts/gate.sh --full", "a job that pull requests run"),
+    (["shell"], {"trust_green_ci": True}, "Trust a green CI build", 'the job "CI on main"'),
 ]
 
 
@@ -2513,7 +2558,7 @@ def test_the_full_gate_names_a_seeded_spec_line_that_a_project_lacks(tmp_path):
         gate = full_gate_in_ci(out)
         assert gate.returncode != 0, cut
         err = gate.stderr.replace("\\", "")
-        assert f"the job {job} with" in err and cut.split()[0] in err, err
+        assert f"needs {job} with" in err and cut.split()[0] in err, err
 
 
 @pytest.mark.parametrize("langs", [["python"], ["dotnet", "python", "shell"]])
@@ -2527,7 +2572,7 @@ def test_every_gate_call_in_the_seeded_spec_has_a_drift_pattern(tmp_path, langs)
     )
     spec = yaml.load((out / ".onedev-buildspec.yml").read_text(), Loader=SpecLoader)
     calls = [
-        (job["name"], line.strip())
+        ("PR" if job["name"] == "CI" else job["name"], line.strip())
         for job in spec["jobs"]
         for step in job["steps"]
         for line in step.get("interpreter", {}).get("commands", "").splitlines()
@@ -2544,3 +2589,69 @@ def test_every_gate_call_in_the_seeded_spec_has_a_drift_pattern(tmp_path, langs)
             and not any(re.search(rx, other) for o, other in calls if o == job and other != line)
         ]
         assert own, (job, line)
+
+
+def test_a_default_branch_answer_names_the_branch_ci_runs_on(tmp_path, monkeypatch):
+    out = render(tmp_path / "p", ["shell"], default_branch="master")
+    spec = (out / ".onedev-buildspec.yml").read_text()
+    assert "branches: master" in spec and "branches: main" not in spec
+    assert "refs/heads/master:refs/remotes/origin/master" in spec
+    gh = render(tmp_path / "g", ["shell"], forge="github", default_branch="master")
+    assert "branches: [master]" in (gh / ".github/workflows/gate.yml").read_text()
+    # The branch-name check lets a commit on the default branch through, whatever it is called.
+    monkeypatch.delenv("GITHUB_HEAD_REF", raising=False)
+    dev = render(tmp_path / "d", ["shell"], default_branch="develop")
+    _repo(dev)
+    assert git(dev, "branch", "--show-current").strip() == "develop"
+    assert run_gate(dev, "--fast").returncode == 0
+
+
+def test_the_ci_gate_passes_a_pull_request_that_changes_the_secret_baseline(tmp_path):
+    out = render(tmp_path / "p", ["shell"])
+    _repo(out)
+    (out / "conf.txt").write_text('token = "AKIA' + 'IOSFODNN7EXAMPLE"\n')
+    git(out, "add", "-A")
+    scan = subprocess.run(
+        [
+            "uvx",
+            "--quiet",
+            "--exclude-newer",
+            "7 days",
+            "--from",
+            "detect-secrets",
+            "detect-secrets",
+            "scan",
+        ],
+        cwd=out,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    (out / ".secrets.baseline").write_text(scan.stdout)
+    git(out, "add", "-A")
+    git(out, "commit", "-q", "--no-verify", "-m", "init")
+    (out / ".secrets.baseline").write_text(scan.stdout.replace("\n  ", "\n   ", 1))
+    git(out, "add", "-A")
+    git(out, "commit", "-q", "--no-verify", "-m", "touch the baseline")
+    gate = subprocess.run(
+        [str(out / "scripts/gate.sh"), "--full", "--only", "shell"],
+        cwd=out,
+        capture_output=True,
+        text=True,
+        env={**os.environ, "CI": "1", "GATE_BASE": "HEAD~1"},
+    )
+    assert gate.returncode == 0, gate.stdout + gate.stderr
+
+
+def test_the_drift_check_takes_the_seeded_lines_in_any_job_that_pull_requests_run(tmp_path):
+    out = render(tmp_path / "p", ["shell"])
+    _repo(out)
+    git(out, "add", "-A")
+    spec = out / ".onedev-buildspec.yml"
+    seeded = spec.read_text()
+    spec.write_text(seeded.replace("- name: CI\n", "- name: backend-test\n", 1))
+    renamed = full_gate_in_ci(out)
+    assert renamed.returncode == 0, renamed.stdout + renamed.stderr
+    spec.write_text(seeded.replace("- !PullRequestUpdateTrigger", "- !BranchUpdateTrigger", 1))
+    none = full_gate_in_ci(out)
+    assert none.returncode != 0 and "needs a job that pull requests run with" in none.stderr

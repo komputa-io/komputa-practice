@@ -52,6 +52,21 @@ Use this guide to start using the practice in a repo that you already have. The 
 
 6. **Check the CI file.** The template seeds one for your forge: `.onedev-buildspec.yml` on OneDev, `.github/workflows/gate.yml` on GitHub. Each runs the full gate on every pull request into `main` and every push to `main`, split into one job per language when one image cannot hold every toolchain. If the repo already had a file at that path, the template left it alone: make it run `scripts/gate.sh --full`.
 
+   Every branch trigger in the file names the `default_branch` answer (`main` unless you set another, for example `master`). Set the answer in your environment file or on the Copier prompt, before the first copy.
+
+   On OneDev, the jobs read job secrets. Set each one once, from your own shell, and never put a value in a file: `<secret command> <item> | odev secret set NAME --branches <default branch>`. `odev secret set` authorizes `main` when `--branches` is left out, so a project whose default branch is `master` or another name must pass it. The file's own comments show the exact line for each job.
+
+   | Job secret | Job that reads it | When it is needed |
+   |---|---|---|
+   | `ONEDEV_COMMENT_TOKEN` | Duplicate code | Always. Set it with `--branches '**'`, because a pull request's build reads it. Use the token of an account that may only comment on pull requests. A missing secret fails this job, not CI |
+   | `ONEDEV_ISSUES_TOKEN` | Deslop nightly | Always. The token of an account that may write issues |
+   | `ONEDEV_USER` and `ONEDEV_TOKEN` | Update dependencies | Always. The login and the token of an account that can push a branch and open a pull request |
+   | `ONEDEV_TOKEN` | CI on main | Only with the `trust_green_ci` answer. A token that can read this project's builds, authorized on the default branch only |
+   | `PKG_USER` and `PKG_TOKEN` | CI, CI on main, Update dependencies | Only with a private package index. A read-only account |
+   | `NUGET_USER` and `NUGET_TOKEN` | CI, CI on main, Update dependencies | Only with a private NuGet feed. A read-only account |
+
+   CI itself needs no secret unless you use a private index or feed. On GitHub the workflows use repository secrets of the same names where they need any.
+
 7. **Open a pull request** with the template's files, the folded checks and the CI file. Merge it when the gate is green on its head commit.
 
 ## Check it worked

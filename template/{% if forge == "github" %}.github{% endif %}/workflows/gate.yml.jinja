@@ -36,7 +36,7 @@
           fetch-depth: 0
           persist-credentials: false
 {%- endmacro -%}
-# CI runs the gate on every pull request into main and on every push to main.
+# CI runs the gate on every pull request into {{ default_branch }} and on every push to {{ default_branch }}.
 # It has no build or deploy step. {% if private_index or nuget_feed %}Its only secrets are the read-only logins
 # for the private package {% if private_index and nuget_feed %}index and feed{% elif private_index %}index{% else %}feed{% endif %}.{% else %}It asks for no secret.{% endif %} Add deploy jobs
 # below it; this file is seeded once and then belongs to the repo.
@@ -44,9 +44,9 @@ name: gate
 
 on:
   pull_request:
-    branches: [main]
+    branches: [{{ default_branch }}]
   push:
-    branches: [main]
+    branches: [{{ default_branch }}]
 
 permissions:
   contents: read

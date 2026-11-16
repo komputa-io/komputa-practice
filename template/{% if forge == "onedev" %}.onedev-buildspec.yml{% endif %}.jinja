@@ -35,13 +35,13 @@
 {%- endif %}
 {%- endmacro %}
 {%- macro fetch_target() %}
-        # The gate scopes a build by its merge base with main. A pull request whose
-        # head is itself a merge commit has no safe first parent, so fetch main (the
+        # The gate scopes a build by its merge base with {{ default_branch }}. A pull request whose
+        # head is itself a merge commit has no safe first parent, so fetch {{ default_branch }} (the
         # checkout leaves its credential in the git config). If this fails, the gate
         # runs every section: HEAD^1 is not a safe base (a fast-forwarded pull request
         # head is not a merge preview), so a failed fetch never narrows the run.
         FULL=
-        git fetch --quiet origin '+refs/heads/main:refs/remotes/origin/main' || { FULL=--full; echo "No target branch fetched; the gate runs every section."; }
+        git fetch --quiet origin '+refs/heads/{{ default_branch }}:refs/remotes/origin/{{ default_branch }}' || { FULL=--full; echo "No target branch fetched; the gate runs every section."; }
 {%- endmacro %}
 {%- macro publish_setup() %}
         export ODEV_HOST='@server_url@' ODEV_PROJECT='@project_path@'
@@ -92,8 +92,8 @@
       commands: |
         set -u
         # Writes .git/ci-trusted when a green CI build ran on exactly this tree,
-        # so the gate steps below skip: the build of a push to main runs on the
-        # tree that the pull request's build passed (a merge with main unmoved
+        # so the gate steps below skip: the build of a push to {{ default_branch }} runs on the
+        # tree that the pull request's build passed (a merge with {{ default_branch }} unmoved
         # has its merge preview's tree). Fails open: every way out short of the
         # last line leaves no marker and exits 0, so anything unexpected runs
         # the gate. The token goes to curl on stdin, not on its command line.
@@ -205,11 +205,11 @@
   triggers:
 {%- if mode != 'pr' %}
   - !BranchUpdateTrigger
-    branches: main
+    branches: {{ default_branch }}
 {%- endif %}
 {%- if mode != 'main' %}
   - !PullRequestUpdateTrigger
-    branches: main
+    branches: {{ default_branch }}
 {%- endif %}
   retryCondition: never
   maxRetries: 3
@@ -218,7 +218,7 @@
 {%- endmacro %}
 version: 35
 jobs:
-# CI runs the gate on every pull request into main and on every push to main.{% if trust_green_ci %}
+# CI runs the gate on every pull request into {{ default_branch }} and on every push to {{ default_branch }}.{% if trust_green_ci %}
 # Two jobs hold the one gate. "CI on main" skips it when a green CI build of a
 # pull request ran on exactly this tree. It needs one job secret on main, the
 # access token of an account that can read this project's builds:
@@ -268,9 +268,9 @@ jobs:
       commands: |
         set -e
         apt-get update -qq && apt-get install -y -qq --no-install-recommends curl jq >/dev/null
-        git fetch -q origin main:refs/remotes/origin/main
+        git fetch -q origin {{ default_branch }}:refs/remotes/origin/{{ default_branch }}
         rc=0
-        scripts/deslop-pr.sh origin/main{% if deslop_fail_over %} --fail-over {{ deslop_fail_over }}{% endif %} || rc=$?
+        scripts/deslop-pr.sh origin/{{ default_branch }}{% if deslop_fail_over %} --fail-over {{ deslop_fail_over }}{% endif %} || rc=$?
         export ODEV_HOST='@server_url@' ODEV_PROJECT='@project_path@'
         scripts/deslop-comment.sh --forge onedev --pr '@pull_request_number@' --report .deslop-pr/deslop-report.json --post \
           || echo 'WARNING deslop: the PR comment was not posted (see the error above)'
@@ -290,7 +290,7 @@ jobs:
     condition: ALWAYS
   triggers:
   - !PullRequestUpdateTrigger
-    branches: main
+    branches: {{ default_branch }}
   retryCondition: never
   maxRetries: 3
   retryDelay: 30

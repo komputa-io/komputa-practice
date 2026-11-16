@@ -31,7 +31,7 @@ _skip_if_exists:
   - scripts/deslop.pin
 _tasks:
   # A new project gets a git repo; an existing one keeps its own.
-  - command: git rev-parse --git-dir >/dev/null 2>&1 || git init -q -b main
+  - command: git rev-parse --git-dir >/dev/null 2>&1 || git init -q -b {{ default_branch }}
     when: "{{ _copier_operation == 'copy' }}"
   # Switch the hooks on. In a linked worktree, set them for this worktree only:
   # the shared config would switch them on in the main checkout and every other
@@ -156,6 +156,12 @@ forge:
   choices:
     OneDev: onedev
     GitHub: github
+
+# CI triggers and the gate's base search name this branch.
+default_branch:
+  type: str
+  help: The default branch that CI runs on and pull requests target
+  default: main
 
 onedev_project:
   type: str
