@@ -276,5 +276,60 @@ hash_with zanzibarco >"$repo/app/package-lock.json"
 run "$repo"
 expect "integrity exemption holds for app/package-lock.json" 0
 
+# --- a fault must fail closed ------------------------------------------------
+newrepo
+printf 'zanzibarco\n' >"$repo/c.txt"
+git -C "$repo" add c.txt && git -C "$repo" commit -q -m planted --no-verify
+blob=$(git -C "$repo" rev-parse HEAD:c.txt)
+rm -- "$repo/.git/objects/${blob:0:2}/${blob:2}"
+run "$repo" --rev HEAD
+expect "a blob that cannot be read is not clean" 2 "cannot read the file"
+
+if ((EUID != 0)); then
+  newrepo
+  printf 'zanzibarco\n' >"$repo/c.txt"
+  chmod 000 "$repo/c.txt"
+  run "$repo"
+  expect "a worktree file that cannot be read is not clean" 2 "cannot read the file"
+fi
+
+newrepo
+printf 'zanzibarco\n' >"$repo/c.txt"
+git -C "$repo" add -A && git -C "$repo" commit -q -m planted --no-verify
+git -C "$repo" rm -q c.txt && git -C "$repo" commit -q -m removed
+run "$repo" --range HEAD~1..HEAD
+expect "--range reads a commit that only added and removed an item" 0
+run "$repo" --range HEAD
+expect "--range reads each commit, not just the last tree" 1 "c.txt:1: denylist entry"
+run "$repo" --range no-such..HEAD
+expect "--range with a bad spec refuses" 2 "cannot list commits"
+
+newrepo
+printf '# nothing\n' >"$root/none.txt"
+SCRUB_DENYLIST=$root/none.txt run "$repo"
+expect "an empty denylist says so" 0 "denylist holds no entries"
+
+# pre-push: a commit that another remote holds is still new to this one.
+newrepo
+mkdir -p "$repo/scripts" "$repo/.githooks"
+cp -- "$check" "$repo/scripts/"
+cp -- "$(dirname -- "$check")/../.githooks/pre-push" "$repo/.githooks/"
+git -C "$repo" config core.hooksPath .githooks
+git init -q --bare "$root/remote-a.git" && git init -q --bare "$root/remote-b.git"
+git -C "$repo" remote add a "$root/remote-a.git"
+git -C "$repo" remote add b "$root/remote-b.git"
+git -C "$repo" add -A && git -C "$repo" commit -q -m init
+printf 'zanzibarco\n' >"$repo/p.txt"
+git -C "$repo" add p.txt && git -C "$repo" commit -q -m planted --no-verify
+git -C "$repo" push -q --no-verify a main >/dev/null 2>&1
+rc=0
+git -C "$repo" push -q b main >"$root/out" 2>&1 || rc=$?
+expect "pre-push scans a commit that only another remote holds" 1 "p.txt:1: denylist entry"
+
+# The handoff folder holds private paths and stays out of the scan.
+if git -C "$here/../.." check-ignore -q docs/handoffs/x.md; then
+  ok "docs/handoffs/ is git-ignored"
+else bad "docs/handoffs/ is git-ignored"; fi
+
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 ((fail == 0))

@@ -10,8 +10,8 @@ Change them in the project template (komputa-practice).
 |---|---|
 | `scripts/gate.sh --fast` | On commit (the pre-commit hook): format, lint and secret scan on staged files, about 5 s. It refuses a staged file that has more changes on disk |
 | `scripts/gate.sh` | The default while you build: the full checks of only the sections that the diff since the merge base touches (docs alone run none). A path that maps to no section, no merge base or no change runs every section; the gate says which on one line. Skips a clean tree that already passed |
-| `scripts/gate.sh --full` | Before a PR and in CI: every section in full (format, lint, type check, every test). Must pass before a PR |
-| `scripts/gate.sh --only SECTION` | One section only, for example `--only shell`. CI runs one per image |
+| `scripts/gate.sh --full` | Before a PR and in CI: every section in full (format, lint, type check, every test), and a secret scan of the files the branch changed (every tracked file when there is no merge base); a key committed with `--no-verify` fails CI. Must pass before a PR |
+| `scripts/gate.sh --only SECTION` | One section only, for example `--only shell`. CI runs one per image. In CI a section whose files the change does not touch is skipped (the diff against the target branch, or the first parent of a merge preview); shell and local always run, because the secret scan is in shell |
 
 - Section budgets: each section writes its time to `.gate/` and fails the gate
   over its budget: fast {{ gate_fast_budget }} s{% if gate_full_budget %}, full {{ gate_full_budget }} s{% endif %}. The failure names the slowest
@@ -33,6 +33,11 @@ Change them in the project template (komputa-practice).
   line); the gate adds a file at its new size, so it asks again only when the
   file grows. `scripts/gate.sh --size-baseline` writes the list.
 - No hook runs on push. CI runs the full gate on the pull request.
+- The build spec is seeded once and then belongs to the repo, so `copier update`
+  never changes it. `scripts/gate.sh --full` checks it for the lines that the
+  template's gate depends on (the Deslop and dependency jobs, the target-branch
+  fetch and `CI=true` in the gate steps, and the trust jobs when `trust_green_ci`
+  is on) and names each one that is missing. Copy the line from the template.
 
 ## The repo's own checks
 

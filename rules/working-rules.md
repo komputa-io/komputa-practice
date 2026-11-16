@@ -63,11 +63,12 @@ add a check, add its row. When a mistake can no longer happen, drop its rule.
 |---|---|
 | A forced push uses a pinned lease | `hooks/block-dangerous-git.sh` refuses others |
 | No delete that cannot be undone | `hooks/block-destructive-delete.sh` refuses it |
-| No private item in this shareable repo | `scripts/scrub-check.sh`, in the git hooks and CI |
+| No private item in this shareable repo | `scripts/scrub-check.sh`, in the git hooks and CI (CI reads each commit of a PR, and the denylist from the `SCRUB_DENYLIST` secret when set) |
 | Every check runs on every pull request | `scripts/check.sh`, in CI |
 | A merge needs green checks at the head | Branch protection on `main` requires the `check`, `template` and `docs` jobs |
 | A merged branch is deleted on the forge | The repo setting that deletes head branches on merge |
 | An operator command opens in a pane, not a `!` line | `skills/herdr/assets/operator-run.sh` refuses outside Herdr and is tested by `scripts/tests/operator-run.test.sh`; choosing it is prose |
+| A worker never blocks on a wait | `hooks/block-foreground-wait.sh` refuses a worker's foreground `gh pr checks --watch`, `gh run watch`, `merge-on-green`, `hc wait` and `sleep` over 10 s, and, in the background too, an `until` or `while true` loop with no `timeout`; `scripts/tests` and `hooks/block-foreground-wait.test.sh` test it. The owner template fixes the stages; choosing to run `stall-watch` is prose |
 | A PR's Deslop findings get a decision | The template's Duplicate code job fails while a duplicate the PR adds is neither fixed nor kept in `.deslop-decisions`; the template gate fails CI when the job no longer calls the check |
 | Every project keeps the CI pattern at its own slot | The template gate's shell section fails CI on drift; `scripts/audit-builds.py` lists every project and any shared schedule |
 | pstack for tier 2 and 3 work in an app or a command-line tool | The project's SessionStart hook reads `.claude/pstack-mandate.md`; the template gate fails CI when the hook is gone |

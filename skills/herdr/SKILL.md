@@ -18,7 +18,7 @@ The scripts that started, watched and resumed leads and workers are in `archive/
 
 ## Brief
 
-Write the brief to a file: `<repo>/.audit/<task>.brief.md` (`.audit/` is git-ignored). It holds the goal, the exclusive worktree and branch, what to read, the data shape, the order of work, success criteria, what is forbidden, a timebox, and the report contract below. The task you send is one line: read the brief and follow it. The brief also follows the "Delegated build work" rules in your global `CLAUDE.md` (`rules/working-rules.md`): the risks that the tests cover ("Tests follow risk"), fix briefs that fix the cause, and fix rounds only for high or medium findings. The git hook reads the whole command line, so a brief or an `hc send` text must not contain a pattern the hook refuses.
+Write the brief to a file: `<repo>/.audit/<task>.brief.md` (`.audit/` is git-ignored). It holds the goal, the exclusive worktree and branch, what to read, the data shape, the order of work, success criteria, what is forbidden, a timebox, and the report contract below. The task you send is one line: read the brief and follow it. The brief also follows the "Delegated build work" rules in your global `CLAUDE.md` (`rules/working-rules.md`): the risks that the tests cover ("Tests follow risk"), fix briefs that fix the cause, and fix rounds only for high or medium findings. The brief sets only the task. It does not set how a worker waits or when it reports: the `owner` template fixes both (see "Wait"). The git hook reads the whole command line, so a brief or an `hc send` text must not contain a pattern the hook refuses.
 
 Size the brief to finish under about 200k context: about two deliverables, or three only when each one is small. Split a bigger job into parts that run one after another on the same branch (part b reads part a's report). A worker that reaches the 300k cap stops with `PARTIAL`, and the next part pays again to read the previous report. `docs/context-economics.md` gives the numbers behind this.
 
@@ -30,7 +30,7 @@ Start the worker with `hc run`, as the publisher's guide says.
 - **Moving up.** Run a worker on a stronger model only in one of the two cases that `rules/working-rules.md` allows: `feature: <reason>` or `fix-rounds: <n> failed on <check>`. Say in your reply which worker you moved up and why. To do it, start the template with a `model` label: `hc run owner --label 'model=<model> @<effort>' "<task>"` (the effort is optional). `role-args` reads the label from `hc get` and uses it in place of the sheet. The labels `model=` and `role=verifier` need `jq` on the PATH; without it `role-args` warns on stderr and uses the sheet.
 - **Tests follow risk.** A brief for an `owner` or `implementer` names the PR's risks, or says `Risks: none`. The worker tests the domain rules, the happy path and one failure case for each risk that ranks high, and adds no more test lines than source lines (`rules/working-rules.md`, "Tests follow risk"). No script checks the brief: the lead reads the report's line counts and the diff.
 - **No test is deleted to get green.** `hooks/block-test-weakening.sh` refuses it in a worker, once it is registered in `~/.claude/settings.json`; since the reset it is not, so the brief carries the rule. To prune a suite in a reviewed PR, start the pruning worker with `hc run --label test-prune=1` and name it in the brief; follow "Never delete or weaken a test to get green" in `rules/working-rules.md`.
-- The two worker hooks (`hooks/block-operator-screen.sh` and `hooks/block-test-weakening.sh`) act only in a worker: an `hc` terminal started from a template or by a parent, as `hc get` on its own address shows. Your own session has neither, so they leave it alone. They act only once they are registered in `~/.claude/settings.json`; since the reset of 10 November 2026 neither is. A template's `command:` runs through `sh -c`, so a variable such as `BROWSER=none` goes in front of the command there.
+- The three worker hooks (`hooks/block-operator-screen.sh`, `hooks/block-foreground-wait.sh` and `hooks/block-test-weakening.sh`) act only in a worker: an `hc` terminal started from a template or by a parent, as `hc get` on its own address shows. Your own session has neither, so they leave it alone. They act only once they are registered in `~/.claude/settings.json`; since the reset of 10 November 2026 none is. A template's `command:` runs through `sh -c`, so a variable such as `BROWSER=none` goes in front of the command there.
 
 Claude Code asks whether to trust a folder it has not seen, and the worker waits on that question until someone answers it. A git worktree of an already trusted repo did not ask. `/tmp` did. After `hc run`, read the screen with `hc read <t>` and answer the question.
 
@@ -60,9 +60,15 @@ A short message keeps your context small. Read the report file before you summar
 
 ## Wait
 
-Wait in the background, not in the foreground. Run the wait as a background command, so that it costs you a turn only when it ends. Give every wait a bound. A report arrives as your next input, tagged `<hc from="t13 name">`.
+Wait in the background, not in the foreground. Run the wait as a background command, so that it costs you a turn only when it ends. Give every wait a bound. A report arrives as your next input, tagged `<hc from="t13 name">`. In a worker, `hooks/block-foreground-wait.sh` refuses a foreground `gh pr checks --watch`, `gh run watch`, `merge-on-green`, `hc wait` and `sleep` over 10 s.
 
 Do not loop `hc wait --children any --timeout …` in the foreground. It returns on every timeout and status change, and each return is a lead turn that rereads your whole context. On one project, a lead at about 280k context paid that on every check-in for hours. Never poll with `sleep`.
+
+**The PR lifecycle is the `owner` template's, not the brief's.** An owner builds, pushes, then runs `merge-on-green --no-merge <pr> <sha> <msg file>` in the background. On green it sends the lead the owner's code-ready message; on red it exits 1 and prints the failed check names. At tier 1 the owner then merges with `merge-on-green <pr> <sha>`. At tier 2 and 3 it stops at code-ready: you run the verifier, then send "merge" or the findings for one fix round. Do not put merge or wait rules in a brief, except "do not merge".
+
+`merge-on-green <pr> <full head sha>` queues `gh pr merge --auto --merge --match-head-commit <sha> --delete-branch`, then runs `gh pr checks --watch --fail-fast` (bound: `MERGE_ON_GREEN_TIMEOUT`, 1800 s). It exits 0 when every check passed, 1 on a failed check, 3 when a job was refused for billing (it failed in about 1 s with no steps run: not a test failure), 4 on a timeout, 5 when the merge could not be queued. With `--no-merge` it queues nothing; exit 5 then means the message was not sent.
+
+**Watch for a stalled worker.** You act only on messages, so a worker stuck on one call is silent. Run `~/.config/herdr-core/stall-watch` as one background command. It polls your children each minute and exits with one line naming a worker that has shown the same status for over 5 minutes (one tool call, or idle without reporting). Read that worker with `hc read <t>`, steer it, and start the watch again. `STALL_AFTER` and `STALL_POLL` set the seconds.
 
 ## Stuck
 
@@ -99,17 +105,19 @@ The templates are `assets/templates/*.md`. Each one's `command` is `claude $("$H
 ```sh
 mkdir -p ~/.config/herdr-core/templates && cp assets/templates/*.md ~/.config/herdr-core/templates/ \
   && install -m 755 assets/role-args.sh ~/.config/herdr-core/role-args \
-  && install -m 755 assets/operator-run.sh ~/.config/herdr-core/operator-run
+  && install -m 755 assets/operator-run.sh ~/.config/herdr-core/operator-run \
+  && install -m 755 assets/merge-on-green.sh ~/.config/herdr-core/merge-on-green \
+  && install -m 755 assets/stall-watch.sh ~/.config/herdr-core/stall-watch
 ```
 
 `role-args` sits in `~/.config/herdr-core/`, so a template finds it from any worktree and any folder. `scripts/tests/role-args.test.sh` tests it.
 
 `operator-run '<command>'` is for a command the operator must run. It opens a pane under the calling agent's own pane (found from `HC_TERMINAL_ID`) that shows the command, waits for Enter, runs it and leaves a shell. The command goes to the pane as one argv element, so quotes, `$` and `;` survive and nothing runs before Enter. It exits 1 with one stderr line when `HC_TERMINAL_ID` is unset, `herdr-app` or `jq` is missing, or the pane is not found; then give the command in a fenced code block. Never put a secret in the command. `scripts/tests/operator-run.test.sh` tests it with a stub `herdr-app`.
 
-- `owner`: one PR, from build to green CI. It builds a tier 1 or tier 2 PR itself, and runs poteto-mode with its subagents only for tier 3, in a repo that turns pstack on (pstack is off globally since the reset). It pushes its own branch and babysits the PR. It merges only when its brief says so.
+- `owner`: one PR, from build to green CI. It builds a tier 1 or tier 2 PR itself, and runs poteto-mode with its subagents only for tier 3, in a repo that turns pstack on (pstack is off globally since the reset). It pushes its own branch, waits for CI in the background, reports at code-ready, and merges on green at tier 1 only.
 - `implementer`: feature and refactoring work.
 - `fixer`: one bug, reproduced and root-caused.
 - `reviewer`: read-only, findings proven by a run. Use it for adversarial review.
-- `verifier`: the tier 2 verifier agent. It has no template of its own: start `reviewer` with `--label role=verifier` and a verifier brief. `role-args` then tries the `verifier` line before `judgment and prose`. It runs the acceptance checks live, reads the diff, and checks the tests against "Tests follow risk".
+- `verifier`: the tier 2 verifier agent. It has no template of its own: start `reviewer` with `--label role=verifier` and a verifier brief. `role-args` then tries the `verifier` line before `judgment and prose`. It runs the acceptance checks live, reads the diff, and checks the tests against "Tests follow risk". Before its report it sets `hc label <its address> pr=<number> verdict=PASS` (or `FAIL`), which Sitrep Live reads for verdicts first try.
 
 `docs/model-selection.md` shows how every agent's model is chosen, and what enforces each part. To move a worker up from its role's model, see "Start a worker".

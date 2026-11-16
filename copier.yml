@@ -292,6 +292,16 @@ deslop_fail_over:
   default: ""
   validator: "{% if deslop_fail_over and not (deslop_fail_over | string | regex_search('^(100|[0-9]{1,2})([.][0-9]+)?$')) %}Give a number from 0 to 100, or leave it empty.{% endif %}"
 
+trust_green_ci:
+  type: bool
+  help: >-
+    Skip the CI gate on a push to main when a green CI build of a pull request
+    ran on exactly the same tree (a merge with main unmoved). Needs the job
+    secret ONEDEV_TOKEN on main, a token that can read this project's builds.
+    OneDev only.
+  default: false
+  when: "{{ forge == 'onedev' }}"
+
 deslop_embeddings_endpoint:
   type: str
   help: >-

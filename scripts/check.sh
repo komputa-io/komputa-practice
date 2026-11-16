@@ -2,7 +2,8 @@
 # Runs every check in this repo. CI runs this same command.
 #   scripts/check.sh
 # It finds scripts and tests from git, so a new one is checked with no edit
-# here. It runs every step, then names each step that failed.
+# here. It runs the steps in parallel, prints each step's output together in
+# the order below, then names each step that failed.
 # Exit 0: all steps passed. 1: a step failed. 2: wrong arguments.
 set -Eeuo pipefail
 shopt -s inherit_errexit
@@ -17,12 +18,51 @@ cd -- "$(git rev-parse --show-toplevel)"
 # A workstation's git settings must not change a result. CI has none.
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null
 
-failed=()
+out=$(mktemp -d "${TMPDIR:-/tmp}/check.XXXXXX")
+trap 'rm -rf -- "$out"' EXIT
+
+# launch <id> <command...>: runs it in the background; its output and exit code go to $out/<id>.
+launch() {
+  local id=$1
+  shift
+  (
+    rc=0
+    "$@" >"$out/$id.log" 2>&1 || rc=$?
+    echo "$rc" >"$out/$id.rc"
+  ) &
+}
+# collect <id>: waits for it, prints its output, returns its exit code.
+collect() {
+  local id=$1
+  until [[ -f $out/$id.rc ]]; do wait -n 2>/dev/null || sleep 0.1; done
+  cat -- "$out/$id.log"
+  return "$(<"$out/$id.rc")"
+}
+
+names=() ids=()
+n=0
 step() {
   local name=$1
   shift
-  printf '\n== %s\n' "$name"
-  "$@" || failed+=("$name")
+  n=$((n + 1))
+  names+=("$name") ids+=("s$n")
+  launch "s$n" "$@"
+}
+
+# parallel <function arg-lists...>: runs each command line of a group at once; the group fails when any does.
+# Each command's output stays together, in the order given.
+run_all() {
+  local g=$RANDOM$RANDOM i=0 rc=0 cmd
+  for cmd in "$@"; do
+    i=$((i + 1))
+    # shellcheck disable=SC2086 # a command line of words, no quoting needed
+    launch "$g-$i" $cmd
+  done
+  for ((j = 1; j <= i; j++)); do
+    # shellcheck disable=SC2310 # collect returns the step's exit code; it is read here, not by set -e
+    collect "$g-$j" || rc=1
+  done
+  return "$rc"
 }
 
 # Tools come through uv at a fixed age, so a workstation and CI run the same
@@ -46,11 +86,9 @@ for f in "${files[@]}"; do
 done
 
 run_tests() {
-  local t rc=0
-  for t in "${tests[@]}"; do
-    "./$t" || rc=1
-  done
-  return "$rc"
+  local t cmds=()
+  for t in "${tests[@]}"; do cmds+=("./$t"); done
+  run_all "${cmds[@]}"
 }
 
 # The herdr skill, its templates and its role-args script name no model: the role's line in pstack-models.md sets it, so a model name here
@@ -87,12 +125,11 @@ app_checks() {
   }
   local run=()
   command -v mise >/dev/null && run=(mise exec --)
-  local s rc=0
-  for s in lint check:protocol typecheck test; do
-    (cd app && "${run[@]}" npm run --silent "$s") || rc=1
-  done
-  return "$rc"
+  local s cmds=()
+  for s in lint check:protocol typecheck test; do cmds+=("app_script $s"); done
+  run_all "${cmds[@]}"
 }
+app_script() { (cd app && "${run[@]}" npm run --silent "$1"); }
 
 # The herdr mod (Sitrep Live in the herdr window): its pure logic, with Node's own test runner on the Node that app/ pins.
 herdr_checks() {
@@ -116,6 +153,13 @@ step app app_checks
 step 'herdr mod' herdr_checks
 step 'skill refs' scripts/check-skill-refs.sh
 step 'shell tests' run_tests
+
+failed=()
+for i in "${!ids[@]}"; do
+  printf '\n== %s\n' "${names[$i]}"
+  # shellcheck disable=SC2310 # same
+  collect "${ids[$i]}" || failed+=("${names[$i]}")
+done
 
 printf '\n'
 if ((${#failed[@]})); then

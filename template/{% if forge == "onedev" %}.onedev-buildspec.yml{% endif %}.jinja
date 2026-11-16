@@ -9,6 +9,7 @@
   'typescript': 'node:24-bookworm',
   'rust': 'rust:' ~ (rust_version | default('1.89.0')) ~ '-bookworm',
   'shell': 'ghcr.io/astral-sh/uv:bookworm',
+  'deslop': 'ghcr.io/astral-sh/uv:trixie',
 } -%}
 {%- set names = {'python': 'Python', 'dotnet': '.NET', 'typescript': 'TypeScript', 'rust': 'Rust'} -%}
 {%- macro pyenv() %}
@@ -33,6 +34,15 @@
       value: '@secret:NUGET_TOKEN@'
 {%- endif %}
 {%- endmacro %}
+{%- macro fetch_target() %}
+        # The gate scopes a build by its merge base with main. A pull request whose
+        # head is itself a merge commit has no safe first parent, so fetch main (the
+        # checkout leaves its credential in the git config). If this fails, the gate
+        # runs every section: HEAD^1 is not a safe base (a fast-forwarded pull request
+        # head is not a merge preview), so a failed fetch never narrows the run.
+        FULL=
+        git fetch --quiet origin '+refs/heads/main:refs/remotes/origin/main' || { FULL=--full; echo "No target branch fetched; the gate runs every section."; }
+{%- endmacro %}
 {%- macro publish_setup() %}
         export ODEV_HOST='@server_url@' ODEV_PROJECT='@project_path@'
         # The checkout's header carries the job credential, which cannot push.
@@ -41,17 +51,9 @@
         git config credential.helper '!f() { echo "username=$ODEV_USER"; echo "password=$ODEV_TOKEN"; }; f'
         git config user.name "Dependency update"
         git config user.email "deps@@noreply.invalid"
-{%- endmacro -%}
-version: 35
-jobs:
-# CI runs the gate on every pull request into main and on every push to main.
-# It has no build or deploy step. {% if private_index or nuget_feed %}Its only secrets are the read-only logins
-# for the private package {% if private_index and nuget_feed %}index and feed{% elif private_index %}index{% else %}feed{% endif %}.{% else %}It asks for no secret.{% endif %} Add deploy jobs
-# below it; this file is seeded once and then belongs to the repo.
-#
-# An at-sign is interpolation syntax in a commands block, comments included.
-# A literal one must be doubled.
-- name: CI
+{%- endmacro %}
+{%- macro ci_job(name, mode) %}
+- name: {{ name }}
   steps:
   - !CheckoutStep
     name: Checkout
@@ -59,6 +61,73 @@ jobs:
     withLfs: false
     withSubmodules: false
     condition: ALL_PREVIOUS_STEPS_WERE_SUCCESSFUL
+{%- if mode != 'plain' %}
+  - !CommandStep
+    name: Record the tree
+    runInContainer: true
+    image: {{ images['shell'] }}
+    interpreter: !DefaultInterpreter
+      commands: |
+        set -e
+        # Each build records the tree it tests, so a later build of the same
+        # tree can trust it. printf, not echo: a trailing newline would become
+        # part of the version and match nothing.
+        tree=$(git rev-parse 'HEAD^{tree}')
+        [ -n "$tree" ] || { echo "No tree for HEAD." >&2; exit 1; }
+        printf '%s' "$tree" > .git/ci-tree
+        cat .git/ci-tree
+    useTTY: false
+    condition: ALL_PREVIOUS_STEPS_WERE_SUCCESSFUL
+  - !SetBuildVersionStep
+    name: Stamp the build with its tree
+    buildVersion: '@file:.git/ci-tree@'
+    condition: ALL_PREVIOUS_STEPS_WERE_SUCCESSFUL
+{%- endif %}
+{%- if mode == 'main' %}
+  - !CommandStep
+    name: Trust a green CI build
+    runInContainer: true
+    image: {{ images['shell'] }}
+    interpreter: !DefaultInterpreter
+      commands: |
+        set -u
+        # Writes .git/ci-trusted when a green CI build ran on exactly this tree,
+        # so the gate steps below skip: the build of a push to main runs on the
+        # tree that the pull request's build passed (a merge with main unmoved
+        # has its merge preview's tree). Fails open: every way out short of the
+        # last line leaves no marker and exits 0, so anything unexpected runs
+        # the gate. The token goes to curl on stdin, not on its command line.
+        MARK=.git/ci-trusted
+        rm -f "$MARK"
+        full() { echo "No trusted CI build: $1. The gate runs."; exit 0; }
+        TREE=$(cat .git/ci-tree) || full "no recorded tree"
+        [ -n "$TREE" ] || full "the recorded tree is empty"
+        [ -n "${ONEDEV_TOKEN-}" ] || full "no token"
+        BODY=$(printf 'header = "Authorization: Bearer %s"\n' "$ONEDEV_TOKEN" \
+          | curl -fsS --max-time 30 -K - -G \
+            --data-urlencode "query=\"Project\" is \"@project_path@\" and \"Job\" is \"CI\" and successful and \"Version\" is \"$TREE\"" \
+            --data-urlencode offset=0 --data-urlencode count=1 '@server_url@/~api/builds') \
+          || full "the build query failed"
+        # The query already asks for these; the answer is checked again rather
+        # than trusted to have honoured it.
+        FOUND=$(printf '%s' "$BODY" | python3 -c '
+        import json, sys
+        tree = sys.argv[1]
+        try:
+            hits = [b for b in json.load(sys.stdin)
+                    if b.get("jobName") == "CI" and b.get("status") == "SUCCESSFUL" and b.get("version") == tree]
+            print("CI #%d (commit %s, tree %s)" % (hits[0]["number"], hits[0]["commitHash"][:7], tree))
+        except (ValueError, TypeError, AttributeError, KeyError, IndexError):
+            sys.exit(1)
+        ' "$TREE") || full "no green CI build has tree $TREE"
+        printf '%s\n' "$FOUND" > "$MARK"
+        echo "Trusting $FOUND."
+    envVars:
+    - name: ONEDEV_TOKEN
+      value: '@secret:ONEDEV_TOKEN@'
+    useTTY: false
+    condition: ALL_PREVIOUS_STEPS_WERE_SUCCESSFUL
+{%- endif %}
 {%- if not split %}
   - !CommandStep
     name: Gate
@@ -67,6 +136,15 @@ jobs:
     interpreter: !DefaultInterpreter
       commands: |
         set -e
+{%- if mode == 'main' %}
+        # Written by "Trust a green CI build" only; under .git, so no commit can
+        # carry one in.
+        if [ -f .git/ci-trusted ]; then
+          echo "Trusting $(cat .git/ci-trusted): this gate is skipped."
+          exit 0
+        fi
+{%- endif %}
+{{- fetch_target() }}
         scripts/gate.sh --full
 {{- pyenv() }}
     useTTY: false
@@ -80,6 +158,14 @@ jobs:
     interpreter: !DefaultInterpreter
       commands: |
         set -e
+{%- if mode == 'main' %}
+        # Written by "Trust a green CI build" only; under .git, so no commit can
+        # carry one in.
+        if [ -f .git/ci-trusted ]; then
+          echo "Trusting $(cat .git/ci-trusted): this gate is skipped."
+          exit 0
+        fi
+{%- endif %}
 {%- if l == 'typescript' %}
         (cd '{{ node_dir }}' && npm ci --no-audit --no-fund)
 {%- elif l == 'rust' %}
@@ -87,7 +173,9 @@ jobs:
         rustup component add clippy rustfmt
         scripts/install-cargo-deny.sh
 {%- endif %}
-        scripts/gate.sh --only {{ l }}
+{{- fetch_target() }}
+        # CI set: the gate skips a section that the change does not touch.
+        CI=true scripts/gate.sh --only {{ l }} $FULL
 {%- if l == 'python' %}{{ pyenv() }}{% elif l == 'dotnet' %}{{ nugetenv() }}{% endif %}
     useTTY: false
     condition: ALL_PREVIOUS_STEPS_WERE_SUCCESSFUL
@@ -101,19 +189,53 @@ jobs:
     interpreter: !DefaultInterpreter
       commands: |
         set -e
-        scripts/gate.sh --only shell --only local
+{%- if mode == 'main' %}
+        # Written by "Trust a green CI build" only; under .git, so no commit can
+        # carry one in.
+        if [ -f .git/ci-trusted ]; then
+          echo "Trusting $(cat .git/ci-trusted): this gate is skipped."
+          exit 0
+        fi
+{%- endif %}
+{{- fetch_target() }}
+        CI=true scripts/gate.sh --only shell --only local $FULL
     useTTY: false
     condition: ALL_PREVIOUS_STEPS_WERE_SUCCESSFUL
 {%- endif %}
   triggers:
+{%- if mode != 'pr' %}
   - !BranchUpdateTrigger
     branches: main
+{%- endif %}
+{%- if mode != 'main' %}
   - !PullRequestUpdateTrigger
     branches: main
+{%- endif %}
   retryCondition: never
   maxRetries: 3
   retryDelay: 30
   timeout: 3600
+{%- endmacro %}
+version: 35
+jobs:
+# CI runs the gate on every pull request into main and on every push to main.{% if trust_green_ci %}
+# Two jobs hold the one gate. "CI on main" skips it when a green CI build of a
+# pull request ran on exactly this tree. It needs one job secret on main, the
+# access token of an account that can read this project's builds:
+#   {{ vault_command }} <item> | odev secret set ONEDEV_TOKEN
+# (authorized on main only: a pull request's build must not read it).{% endif %}
+# It has no build or deploy step. {% if private_index or nuget_feed %}Its only secrets are the read-only logins
+# for the private package {% if private_index and nuget_feed %}index and feed{% elif private_index %}index{% else %}feed{% endif %}.{% else %}It asks for no secret.{% endif %} Add deploy jobs
+# below it; this file is seeded once and then belongs to the repo.
+#
+# An at-sign is interpolation syntax in a commands block, comments included.
+# A literal one must be doubled.
+{%- if trust_green_ci %}
+{{ ci_job('CI', 'pr') }}
+{{ ci_job('CI on main', 'main') }}
+{%- else %}
+{{ ci_job('CI', 'plain') }}
+{%- endif %}
 
 # Duplicate code that a pull request adds, found by Deslop (version and checksum
 # in scripts/deslop.pin). It runs on pull requests only, in a job of its own so a
@@ -141,7 +263,7 @@ jobs:
   - !CommandStep
     name: Deslop
     runInContainer: true
-    image: {{ images['shell'] }}
+    image: {{ images['deslop'] }}
     interpreter: !DefaultInterpreter
       commands: |
         set -e
@@ -205,7 +327,7 @@ jobs:
   - !CommandStep
     name: Scan and file
     runInContainer: true
-    image: {{ images['shell'] }}
+    image: {{ images['deslop'] }}
     interpreter: !DefaultInterpreter
       commands: |
         set -e

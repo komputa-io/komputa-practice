@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
 # Refuses a push when the tree of any commit it sends holds a private item.
-# git gives one line per ref on stdin: local-ref local-sha remote-ref remote-sha.
+# git gives one line per ref on stdin: local-ref local-sha remote-ref remote-sha,
+# and the remote's name as $1.
 set -euo pipefail
 check=$(git rev-parse --show-toplevel)/scripts/scrub-check.sh
 zero=0000000000000000000000000000000000000000
-while read -r _ local_sha _ remote_sha; do
+while read -r _ local_sha _ _; do
   [[ $local_sha == "$zero" ]] && continue # a delete sends no tree
-  if [[ $remote_sha == "$zero" ]]; then
-    commits=$(git rev-list "$local_sha" --not --remotes)
-  else
-    commits=$(git rev-list "$remote_sha..$local_sha")
-  fi
+  # Only commits the receiving remote lacks: a commit already on it passed this check when it went there,
+  # and a merge of main would otherwise rescan every commit main gained. A commit that only another
+  # remote holds has not been read for this one, so it is scanned.
+  commits=$(git rev-list "$local_sha" --not --remotes="$1")
   for c in $commits; do
     "$check" --rev "$c"
   done

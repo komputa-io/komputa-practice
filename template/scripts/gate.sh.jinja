@@ -109,9 +109,18 @@ base=
 ref=${GATE_BASE-}
 if [[ "$mode" != fast ]]; then
   if [[ -z "$ref" ]]; then
-    ref=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null) || ref=main
+    # A full ref name: a tag or branch called "main" cannot shadow it.
+    ref=$(git symbolic-ref --quiet refs/remotes/origin/HEAD 2>/dev/null) || ref=
+    if [[ -z "$ref" ]]; then
+      for ref in refs/remotes/origin/main refs/heads/main; do
+        git rev-parse --verify --quiet "$ref^{commit}" >/dev/null && break
+        ref=
+      done
+    fi
   fi
   base=$(git merge-base HEAD "$ref" 2>/dev/null) || base=
+  ref=${ref#refs/heads/}
+  ref=${ref#refs/remotes/}
 fi
 
 # section_of PATH: the sections that a change to PATH can break, or "none" for
@@ -124,6 +133,11 @@ section_of() {
     return
   }
 {%- endfor %}
+  # The gate runs every section: an edit to it can break any of them.
+  [[ "$p" != scripts/gate.sh ]] || {
+    printf '%s\n' "${sections[@]}"
+    return
+  }
   case "$name" in
 {%- if 'python' in langs %}
     *.py | pyproject.toml | uv.lock | uv.toml | ruff.toml | pyrightconfig.json | pytest.toml)
@@ -166,15 +180,26 @@ section_of() {
   esac
 }
 
-# The bare command checks the sections that the diff touches, in full. A run
-# with --full, --only, --fast or CI set checks what it names.
+# The bare command checks the sections that the diff touches, in full. CI with
+# --only does the same for the sections it names: a CI build of a pull request
+# runs on the merge preview, whose first parent is the target branch. The shell
+# and local sections always run in CI: they hold the secret scan. A run with
+# --full or --fast checks what it names.
 scope=
-if [[ "$mode" == full && -z "$chosen" && -z "$explicit_full" && -z "${CI-}" ]]; then
-  if [[ -z "$base" ]]; then
-    printf 'gate: scope: every section, because there is no merge base with %s (set GATE_BASE)\n' "$ref"
+scope_base=$base
+scope_ref=$ref
+if [[ -z "$scope_base" && -n "$chosen" && -n "${CI-}" ]] \
+  && [[ "$(git rev-list --parents -n 1 HEAD 2>/dev/null | wc -w)" == 3 ]]; then
+  scope_base=$(git rev-parse HEAD^1)
+  scope_ref=HEAD^1
+fi
+if [[ "$mode" == full && -z "$explicit_full" ]] \
+  && { [[ -z "$chosen" && -z "${CI-}" ]] || [[ -n "$chosen" && -n "${CI-}" ]]; }; then
+  if [[ -z "$scope_base" ]]; then
+    printf 'gate: scope: every section, because there is no merge base with %s (set GATE_BASE)\n' "$scope_ref"
   else
     paths=$({
-      git diff --name-only --no-renames "$base" -- ':/'
+      git diff --name-only --no-renames "$scope_base" -- ':/'
       git ls-files --others --exclude-standard --full-name -- ':/'
     } | sort -u)
     declare -A hit=()
@@ -192,23 +217,29 @@ if [[ "$mode" == full && -z "$chosen" && -z "$explicit_full" && -z "${CI-}" ]]; 
       done
     done <<<"$paths"
     if ((n == 0)); then
-      printf 'gate: scope: every section, because nothing changed since %s\n' "$ref"
+      printf 'gate: scope: every section, because nothing changed since %s\n' "$scope_ref"
     elif [[ -n "$unmapped" ]]; then
       printf 'gate: scope: every section, because no section covers %s\n' "$unmapped"
-    elif [[ -z "${hit[*]-}" ]]; then
-      printf 'gate: scope: no section; %d changed path(s) since %s are docs. Run scripts/gate.sh --full to check everything\n' "$n" "$ref"
+    elif [[ -z "${hit[*]-}" && -z "${CI-}" ]]; then
+      printf 'gate: scope: no section; %d changed path(s) since %s are docs. Run scripts/gate.sh --full to check everything\n' "$n" "$scope_ref"
       exit 0
     else
       # The repo's own checks run beside any section: they may read any file.
       hit[local]=1
+      # In CI the shell section holds the secret scan, so it always runs.
+      [[ -z "${CI-}" ]] || hit[shell]=1
       want=()
-      for s in "${sections[@]}"; do
+      for s in "${only[@]}"; do
         [[ -z "${hit[$s]-}" ]] || {
           want[$s]=1
           scope+="${scope:+ }$s"
         }
       done
-      printf 'gate: scope: %s (%d changed path(s) since %s). Run scripts/gate.sh --full to check everything\n' "$scope" "$n" "$ref"
+      if [[ -z "$scope" ]]; then
+        printf 'gate: scope: no section; %d changed path(s) since %s are docs or outside the sections named. Run scripts/gate.sh --full to check everything\n' "$n" "$scope_ref"
+        exit 0
+      fi
+      printf 'gate: scope: %s (%d changed path(s) since %s). Run scripts/gate.sh --full to check everything\n' "$scope" "$n" "$scope_ref"
     fi
   fi
 fi
@@ -414,36 +445,51 @@ if [[ "$mode" == fast ]]; then
   fi
 fi
 
-# The secret scan, on every staged file. .secrets.baseline holds the findings
-# already reviewed.
+# The secret scan. .secrets.baseline holds the findings already reviewed. A
+# fast run scans the staged files and stages the baseline when it only moved
+# line numbers. A full run (CI) scans every file that the branch changed since
+# the merge base, or every tracked file when there is no merge base, so that a
+# key committed with --no-verify still fails. It works on a copy of the
+# baseline and leaves the tree as it found it. It runs in the shell section.
+# secret_scan FILE...: fail the gate on a possible secret.
+secret_scan() {
+  local scan=(uvx --quiet --exclude-newer "7 days" --from detect-secrets detect-secrets-hook)
+  local base_file=.secrets.baseline before
+  # A OneDev reference such as @secret:NAME@ names a job secret; it is not one.
+  # The baseline's line filter holds this pattern and any the repo adds. Pass
+  # it only without a baseline: --exclude-lines replaces that filter.
+  local secret_refs=(--exclude-lines '@secret:[A-Za-z0-9_.-]+@')
+  if [[ -f .secrets.baseline ]]; then
+    if [[ "$mode" != fast ]]; then
+      mkdir -p "$gate_dir"
+      base_file=$gate_dir/secrets.baseline
+      cp .secrets.baseline "$base_file"
+    fi
+    before=$(git hash-object "$base_file")
+    if ! "${scan[@]}" --baseline "$base_file" "$@"; then
+      # The hook fails once when it only moves known findings' line numbers
+      # in the baseline. Rewrite and scan again; a new finding fails twice.
+      # Compare the content, not git diff: the baseline may not be tracked yet.
+      if [[ "$(git hash-object "$base_file")" != "$before" ]] \
+        && { [[ "$mode" != fast ]] || git add .secrets.baseline; } \
+        && "${scan[@]}" --baseline "$base_file" "$@"; then
+        [[ "$mode" != fast ]] || printf 'gate: staged the updated .secrets.baseline (line numbers moved)\n'
+      else
+        die "possible secret in a file; read it with {{ vault_command }} instead"
+      fi
+    fi
+  else
+    printf 'gate: no .secrets.baseline, so no finding counts as reviewed. Create it:\n' >&2
+    printf "  uvx --exclude-newer '7 days' --from detect-secrets detect-secrets scan --exclude-lines '@secret:[A-Za-z0-9_.-]+@' > .secrets.baseline\n" >&2
+    "${scan[@]}" "${secret_refs[@]}" "$@" || die "possible secret in a file; read it with {{ vault_command }} instead"
+  fi
+}
+
 if [[ "$mode" == fast ]]; then
   files=$(staged)
   if [[ -n "$files" ]]; then
     mapfile -t list <<<"$files"
-    scan=(uvx --quiet --exclude-newer "7 days" --from detect-secrets detect-secrets-hook)
-    # A OneDev reference such as @secret:NAME@ names a job secret; it is not one.
-    # The baseline's line filter holds this pattern and any the repo adds. Pass
-    # it only without a baseline: --exclude-lines replaces that filter.
-    secret_refs=(--exclude-lines '@secret:[A-Za-z0-9_.-]+@')
-    if [[ -f .secrets.baseline ]]; then
-      before=$(git hash-object .secrets.baseline)
-      if ! "${scan[@]}" --baseline .secrets.baseline "${list[@]}"; then
-        # The hook fails once when it only moves known findings' line numbers
-        # in the baseline. Stage that rewrite and scan again; a new finding
-        # fails twice. Compare the content, not git diff: the baseline may not
-        # be tracked yet.
-        if [[ "$(git hash-object .secrets.baseline)" != "$before" ]] && git add .secrets.baseline \
-          && "${scan[@]}" --baseline .secrets.baseline "${list[@]}"; then
-          printf 'gate: staged the updated .secrets.baseline (line numbers moved)\n'
-        else
-          die "possible secret in a staged file; read it with {{ vault_command }} instead"
-        fi
-      fi
-    else
-      printf 'gate: no .secrets.baseline, so no finding counts as reviewed. Create it:\n' >&2
-      printf "  uvx --exclude-newer '7 days' --from detect-secrets detect-secrets scan --exclude-lines '@secret:[A-Za-z0-9_.-]+@' > .secrets.baseline\n" >&2
-      "${scan[@]}" "${secret_refs[@]}" "${list[@]}" || die "possible secret in a staged file; read it with {{ vault_command }} instead"
-    fi
+    secret_scan "${list[@]}"
   fi
 fi
 {%- if 'python' in langs %}
@@ -502,7 +548,8 @@ if [[ -n "${want[dotnet]-}" ]]; then
     full)
       dotnet tool restore
       dotnet restore{% if dotnet_lock_files %} --locked-mode{% endif %}
-      dotnet format --verify-no-changes --no-restore
+      # The build enforces the analyzers and code style (Directory.Build.props), so format only checks whitespace.
+      dotnet format whitespace --verify-no-changes --no-restore
       dotnet build --no-restore
       timed 'dotnet test' dotnet test --no-build
       ;;
@@ -581,6 +628,45 @@ fi
 # gate script is tracked.
 if [[ -n "${want[shell]-}" ]]; then
   section_begin shell
+  if [[ "$mode" == full ]]; then
+    # Every file the branch changed, at the tip and in each of its commits: a
+    # key added and removed again is still in the history that a merge keeps.
+    # Without a merge base: every tracked file. -z keeps odd names whole.
+    if [[ -n "$base" ]]; then
+      mapfile -d '' -t list < <(git diff -z --name-only --no-renames --diff-filter=d "$base" HEAD --)
+    else
+      mapfile -d '' -t list < <(git ls-files -z)
+    fi
+    present=()
+    for f in "${list[@]}"; do
+      if [[ -f "$f" ]]; then present+=("$f"); fi
+    done
+    if [[ -n "${present[*]}" ]]; then
+      timed secret-scan secret_scan "${present[@]}"
+    fi
+    if [[ -n "$base" ]]; then
+      hist=$gate_dir/history
+      rm -rf "$hist"
+      seen=" "
+      while IFS= read -r c; do
+        mapfile -d '' -t list < <(git diff-tree -r -z --no-commit-id --name-only --diff-filter=d "$c")
+        have=()
+        for f in "${list[@]}"; do
+          blob=$(git rev-parse "$c:$f")
+          [[ "$seen" != *" $blob "* ]] || continue
+          seen+="$blob "
+          mkdir -p "$hist/$(dirname -- "$f")"
+          git cat-file blob "$blob" >"$hist/$f"
+          have+=("$f")
+        done
+        if [[ -n "${have[*]}" ]]; then
+          [[ ! -f .secrets.baseline ]] || cp .secrets.baseline "$hist/.secrets.baseline"
+          (cd "$hist" && timed secret-scan-history secret_scan "${have[@]}")
+          rm -rf "$hist"
+        fi
+      done < <(git rev-list "$base..HEAD")
+    fi
+  fi
   # Vendored or retired folders, kept as they are (the shell_exclude answer):
   # no lint, and a gate script there is not a second gate.
   skip=({% for d in shell_exclude %}':!{{ d }}/'{% if not loop.last %} {% endif %}{% endfor %})
@@ -633,10 +719,33 @@ if [[ -n "${want[shell]-}" ]]; then
       'Duplicate code|scripts/deslop-decisions\.sh'
       'Deslop nightly|cronExpression: 0 {{ nightly_minute }} {{ nightly_hour }} \* \* \?'
       "Update dependencies|cronExpression: 0 {{ weekly_minute }} {{ weekly_hour }} \? \* {{ ['MON','TUE','WED','THU','FRI','SAT','SUN'][weekly_day] }}"
+      # Later fixes depend on these gate-step lines. A template PR that adds a
+      # scripts/gate.sh call to the spec adds its pattern here (a test holds it).
+      'CI|git fetch --quiet origin'
+{%- set sections = [] -%}
+{%- for l in ['python', 'dotnet', 'typescript', 'rust'] if l in languages -%}{%- set _ = sections.append(l) -%}{%- endfor -%}
+{#- One pattern for each gate step, so that dropping CI=true or $FULL from one step fails. -#}
+{%- if 'dotnet' in languages or 'typescript' in languages or 'rust' in languages -%}
+{%- set gate_calls = [] -%}
+{%- for l in sections + ['shell --only local'] -%}{%- set _ = gate_calls.append('CI=true scripts/gate\\.sh --only ' ~ l ~ ' [$]FULL') -%}{%- endfor -%}
+{%- else -%}
+{%- set gate_calls = ['scripts/gate\\.sh --full'] -%}
+{%- endif %}
+{%- for call in gate_calls %}
+      'CI|{{ call }}'
+{%- endfor %}
+{%- if trust_green_ci %}
+      'CI on main|Trust a green CI build'
+      'CI on main|git fetch --quiet origin'
+{%- for call in gate_calls %}
+      'CI on main|{{ call }}'
+{%- endfor %}
+{%- endif %}
     )
     for want in "${pattern[@]}"; do
+      # grep reads all of the block (no -q): an early exit kills awk with SIGPIPE, and pipefail then reports a match as a miss.
       # shellcheck disable=SC2310 # the status is the answer.
-      if ! [[ -f "$spec" ]] || ! job_block "${want%%|*}" | grep -Eq -- "${want#*|}"; then
+      if ! [[ -f "$spec" ]] || ! job_block "${want%%|*}" | grep -E -- "${want#*|}" >/dev/null; then
         printf 'gate: %s needs the job "%s" with %s, as the template seeds it (schedule_slot {{ schedule_slot }})\n' \
           "$spec" "${want%%|*}" "${want#*|}" >&2
         hits=$((hits + 1))
@@ -647,6 +756,8 @@ if [[ -n "${want[shell]-}" ]]; then
     pattern=(
       "$flows/gate.yml|scripts/deslop-pr\.sh"
       "$flows/gate.yml|scripts/deslop-decisions\.sh"
+      "$flows/gate.yml|fetch-depth: 0"
+      "$flows/gate.yml|scripts/gate\.sh --(full|only shell)"
       "$flows/deslop-nightly.yml|cron: '{{ nightly_minute }} {{ nightly_hour }} \* \* \*'"
       "$flows/update-deps.yml|cron: '{{ weekly_minute }} {{ weekly_hour }} \* \* {{ (weekly_day + 1) % 7 }}'"
     )

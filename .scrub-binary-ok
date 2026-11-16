@@ -38,3 +38,8 @@ app/docs-site/public/shots/work-1440-dark.png
 app/docs-site/public/shots/work-1440-light.png
 app/docs-site/public/shots/work-390-dark.png
 app/docs-site/public/shots/work-390-light.png
+app/frontend/src/fleet/ui/fonts/Inter-Variable.woff2
+app/frontend/src/fleet/ui/fonts/JetBrainsMono-Variable.woff2
+app/frontend/src/fleet/ui/fonts/Outfit-Variable.woff2
+app/docs-site/public/shots/since-project-1440.png
+app/docs-site/public/shots/since-project-390.png

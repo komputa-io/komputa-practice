@@ -19,7 +19,7 @@ This page lists each setting of the practice and the file that holds it. The set
 | The template answers | `.copier-answers.yml` in each repo | The project's kind, languages, folders, gate budgets and package feeds. See [Template questions](/reference/template-questions) |
 | The watcher settings | `~/.config/practice-watch.env` | Idle time, nudges, the alert command and call timeouts. See [The watcher](/explanation/the-watcher#settings) |
 | The worker templates | `~/.config/herdr-core/templates/` | The owner, implementer, fixer and reviewer roles of herdr workers |
-| The scrub denylist, `SCRUB_DENYLIST` | `~/.config/komputa/public-denylist.txt` by default | The private items that the scrub check refuses in the practice repo |
+| The scrub denylist, `SCRUB_DENYLIST` | `~/.config/komputa/public-denylist.txt` by default | The private items that the scrub check refuses in the practice repo. CI reads the same list from the `SCRUB_DENYLIST` repository secret |
 | `DOCS_SITE_URL` | The docs build's environment | The address of this docs site |
 
 ## Change the secret tool that a hook names

@@ -64,7 +64,9 @@ The practice repo may go to a client, so every commit and push runs the scrub ch
    ~/Code/komputa-practice/scripts/scrub-check.sh
    ```
 
-   It prints the file, the line and the kind of each item, never the item. Replace each one with a placeholder such as `<home>` or `<secret-tool>`. A binary file fails until a person looks at it and adds its path to `.scrub-binary-ok`.
+   It prints the file, the line and the kind of each item, never the item. Replace each one with a placeholder such as `<home>` or `<secret-tool>`. A binary file fails until a person looks at it and adds its path to `.scrub-binary-ok`. A file that the check cannot read is not clean: the check exits 2 and names it. `--range <base>..<head>` reads every commit in a range, as CI does for each pull request.
+
+   CI reads the denylist from the `SCRUB_DENYLIST` repository secret (one item per line). When the secret is not set, the job warns that it checked the patterns only.
 
 ## Remove the practice
 

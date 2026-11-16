@@ -49,6 +49,8 @@ Use this guide for one pull request: a bug fix, a small feature, a refactor or a
    gh pr merge <number> --merge --match-head-commit <full head sha>
    ```
 
+   On OneDev, a project made with `trust_green_ci` runs two jobs: `CI` on the pull request and `CI on main` on the push. When the pull request's green build ran on exactly the tree that main now holds, `CI on main` skips the gate and the build takes seconds. The job secret `ONEDEV_TOKEN` (a token that reads the project's builds, authorized on main only) makes this work. The spec is seeded once, so an existing project copies the two jobs from the template by hand; `scripts/gate.sh --full` fails and names each seeded line that the spec lacks.
+
 ## Check it worked
 
 - CI passed on the head commit of the pull request.

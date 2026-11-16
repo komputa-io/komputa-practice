@@ -11,9 +11,9 @@ the three it holds, and its two schedules. Then it names each pair of projects
 that share a schedule, and the lowest free slots. A project whose description
 starts with [ARCHIVED is named once and not checked.
 
-Read only. It lists OneDev projects with odev, and reads each default branch
-with a shallow, blob-less clone into a temporary folder that it removes; git
-uses odev's credential helper. GitHub repos come through gh.
+Read only. It lists OneDev projects with odev, and reads the two files it needs
+from each default branch through the OneDev repository files API (no clone).
+GitHub repos come through gh.
 Exit 0 when every project conforms and no two share a schedule, 1 when one
 does not, 2 on wrong arguments or a failed read.
 """
@@ -26,7 +26,6 @@ import json
 import re
 import subprocess
 import sys
-import tempfile
 from collections import defaultdict
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -81,38 +80,35 @@ def onedev_project(spec: str, copier: str, name: str) -> Project:
 def onedev(host: str) -> list[Project]:
     listed = json.loads(run("odev", "project", "list", "--host", host, "--limit", "1000", "--json"))
     archived = {p["path"] for p in listed if (p.get("description") or "").startswith("[ARCHIVED")}
-    paths = [p["path"] for p in listed]
     found = []
-    with tempfile.TemporaryDirectory() as tmp:
-        for path in paths:
-            repo = Path(tmp) / path.replace("/", "__")
-            run(
-                "git",
-                "clone",
-                "-q",
-                "--depth",
-                "1",
-                "--filter=blob:none",
-                "--no-checkout",
-                f"{host.rstrip('/')}/{path}.git",
-                str(repo),
-            )
+    for p in listed:
+        path = p["path"]
+        branch = onedev_api(host, f"repositories/{p['id']}/default-branch").strip().strip('"')
 
-            def show(name: str, repo: Path = repo) -> str:
-                done = subprocess.run(
-                    ["git", "show", f"HEAD:{name}"],
-                    cwd=repo,
-                    check=False,
-                    capture_output=True,
-                    text=True,
-                )
-                return done.stdout if done.returncode == 0 else ""
-
-            project = onedev_project(
-                show(".onedev-buildspec.yml"), show(".copier-answers.yml"), path
+        def show(name: str, id: int = p["id"], branch: str = branch) -> str:
+            if not branch:
+                return ""
+            body = onedev_api(
+                host, f"repositories/{id}/files", f"revision={branch}", f"file={name}"
             )
-            found.append(replace(project, archived=path in archived))
+            return base64.b64decode(json.loads(body)["base64Content"]).decode() if body else ""
+
+        project = onedev_project(show(".onedev-buildspec.yml"), show(".copier-answers.yml"), path)
+        found.append(replace(project, archived=path in archived))
     return found
+
+
+def onedev_api(host: str, path: str, *query: str) -> str:
+    """One GET through odev. A missing file or branch gives "" and any other failure raises."""
+    args = ["odev", "api", "--host", host, path]
+    for q in query:
+        args += ["-q", q]
+    done = subprocess.run(args, capture_output=True, text=True, check=False)
+    if done.returncode == 0:
+        return done.stdout
+    if "HTTP 404" in done.stderr:
+        return ""
+    raise subprocess.CalledProcessError(done.returncode, args, done.stdout, done.stderr)
 
 
 def github(owner: str) -> list[Project]:

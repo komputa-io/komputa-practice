@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
 import tomllib
 import subprocess
@@ -244,6 +245,78 @@ def test_the_spec_reads_secrets_only_when_a_step_runs(tmp_path):
     refs = [line.strip() for line in spec.splitlines() if "@secret:" in line]
     assert refs and "accessTokenSecret" not in spec
     assert all(line.startswith("value: '@secret:") for line in refs), refs
+
+
+def test_trusting_a_green_ci_build_splits_ci_and_reads_the_secret_only_on_main(tmp_path):
+    out = render(tmp_path / "p", ["shell"], trust_green_ci=True)
+    spec = out / ".onedev-buildspec.yml"
+    names = {j["name"] for j in yaml.load(spec.read_text(), Loader=SpecLoader)["jobs"]}
+    assert {"CI", "CI on main"} <= names
+    pr = " ".join(s["name"] for s in steps(spec, "CI"))
+    main = " ".join(s["name"] for s in steps(spec, "CI on main"))
+    assert "Trust a green CI build" in main and "Trust a green CI build" not in pr
+    default = render(tmp_path / "q", ["shell"]) / ".onedev-buildspec.yml"
+    assert "CI on main" not in default.read_text()
+
+
+def test_the_trust_step_trusts_only_a_green_ci_build_of_the_same_tree(tmp_path):
+    out = render(tmp_path / "p", ["shell"], trust_green_ci=True)
+    step = {s["name"]: s for s in steps(out / ".onedev-buildspec.yml", "CI on main")}[
+        "Trust a green CI build"
+    ]
+    script = tmp_path / "trust.sh"
+    script.write_text(
+        step["interpreter"]["commands"]
+        .replace("@project_path@", "demo")
+        .replace("@server_url@", "https://od.invalid")
+    )
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "curl").write_text(
+        '#!/bin/sh\ncat >/dev/null\n[ "$FAKE_CURL" = fail ] && exit 22\ncat "$FAKE_CURL"\n'
+    )
+    (bin_dir / "curl").chmod(0o755)
+    tree = "a" * 40
+    good = {
+        "jobName": "CI",
+        "status": "SUCCESSFUL",
+        "version": tree,
+        "number": 3,
+        "commitHash": "abcdef123",
+    }
+    cases = {
+        "good": ([good], tree, True),
+        "other tree": ([{**good, "version": "b" * 40}], tree, False),
+        "other job": ([{**good, "jobName": "Deploy"}], tree, False),
+        "failed": ([{**good, "status": "FAILED"}], tree, False),
+        "running": ([{**good, "status": "RUNNING"}], tree, False),
+        "no build": ([], tree, False),
+        "bad json": ("not json", tree, False),
+        "api error": ("fail", tree, False),
+        "empty tree": ([good], "", False),
+    }
+    for name, (body, recorded, trusted) in cases.items():
+        work = tmp_path / name.replace(" ", "-")
+        (work / ".git").mkdir(parents=True)
+        (work / ".git/ci-tree").write_text(recorded)
+        reply = work / "reply.json"
+        reply.write_text(body if isinstance(body, str) else json.dumps(body))
+        env = {**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}", "ONEDEV_TOKEN": "t"}
+        env["FAKE_CURL"] = "fail" if body == "fail" else str(reply)
+        run = subprocess.run(
+            ["bash", str(script)], cwd=work, env=env, capture_output=True, text=True
+        )
+        assert run.returncode == 0, (name, run.stderr)
+        assert "Traceback" not in run.stderr, name
+        assert (work / ".git/ci-trusted").exists() is trusted, name
+    work = tmp_path / "no-token"
+    (work / ".git").mkdir(parents=True)
+    (work / ".git/ci-tree").write_text(tree)
+    env = {k: v for k, v in os.environ.items() if k != "ONEDEV_TOKEN"}
+    env["PATH"] = f"{bin_dir}:{env['PATH']}"
+    env["FAKE_CURL"] = str(tmp_path / "good" / "reply.json")
+    run = subprocess.run(["bash", str(script)], cwd=work, env=env, capture_output=True, text=True)
+    assert run.returncode == 0 and not (work / ".git/ci-trusted").exists()
 
 
 def test_the_full_gate_passes_in_a_new_python_repo_with_no_tests(tmp_path):
@@ -558,6 +631,44 @@ def test_the_fast_gate_stages_a_baseline_whose_line_numbers_moved(tmp_path):
         check=True,
     ).stdout.split()
     assert ".secrets.baseline" in staged
+
+
+def test_the_ci_gate_fails_on_a_key_committed_with_no_verify(tmp_path):
+    out = render(tmp_path / "p", ["shell"])
+    _repo(out)
+    git(out, "add", "-A")
+    git(out, "commit", "-qm", "init")
+    (out / "conf.txt").write_text('token = "AKIA' + 'IOSFODNN7EXAMPLE"\n')
+    git(out, "add", "-A")
+    git(out, "commit", "-q", "--no-verify", "-m", "plant a key")
+    gate = subprocess.run(
+        [str(out / "scripts/gate.sh"), "--full"],
+        cwd=out,
+        capture_output=True,
+        text=True,
+        env={**os.environ, "CI": "1", "GATE_BASE": "HEAD~1"},
+    )
+    assert gate.returncode != 0 and "possible secret" in gate.stderr, gate.stdout + gate.stderr
+
+
+def test_the_ci_gate_fails_on_a_key_added_and_removed_in_the_branch(tmp_path):
+    out = render(tmp_path / "p", ["shell"])
+    _repo(out)
+    git(out, "add", "-A")
+    git(out, "commit", "-qm", "init")
+    (out / "clé.txt").write_text('token = "AKIA' + 'IOSFODNN7EXAMPLE"\n')
+    git(out, "add", "-A")
+    git(out, "commit", "-q", "--no-verify", "-m", "plant a key")
+    git(out, "rm", "-q", "clé.txt")
+    git(out, "commit", "-q", "--no-verify", "-m", "remove it")
+    gate = subprocess.run(
+        [str(out / "scripts/gate.sh"), "--full"],
+        cwd=out,
+        capture_output=True,
+        text=True,
+        env={**os.environ, "CI": "1", "GATE_BASE": "HEAD~2"},
+    )
+    assert gate.returncode != 0 and "possible secret" in gate.stderr, gate.stdout + gate.stderr
 
 
 def run_gate(out: Path, *args: str) -> subprocess.CompletedProcess[str]:
@@ -1474,6 +1585,95 @@ def test_the_bare_gate_runs_no_section_for_a_docs_change(tmp_path):
     assert runs(out) == 0
 
 
+def test_ci_with_only_skips_an_untouched_section_but_keeps_shell_and_local(tmp_path):
+    out = _scoped(tmp_path, ["python", "shell"])
+    _commit_file(out, "docs/notes.md", "notes\n")
+    env = {**os.environ, "CI": "1", "GATE_BASE": "main"}
+
+    def gate(*args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [str(out / "scripts/gate.sh"), *args], cwd=out, capture_output=True, text=True, env=env
+        )
+
+    skipped = gate("--only", "python")
+    assert skipped.returncode == 0, skipped.stdout + skipped.stderr
+    assert "gate: scope: no section;" in skipped.stdout
+    kept = gate("--only", "shell", "--only", "local")
+    assert kept.returncode == 0, kept.stdout + kept.stderr
+    assert "gate: scope: shell local (1 changed path(s) since main)." in kept.stdout
+    assert (out / ".git/runs").read_text().split() == ["full"]
+
+
+def test_ci_scopes_a_merge_preview_by_its_first_parent(tmp_path):
+    out = _scoped(tmp_path, ["python", "shell"])
+    _commit_file(out, "docs/notes.md", "notes\n")
+    git(out, "checkout", "-q", "--detach", "main")
+    git(out, "merge", "-q", "--no-ff", "--no-verify", "-m", "preview", "feat")
+    git(out, "branch", "-q", "-D", "main", "feat")
+    gate = subprocess.run(
+        [str(out / "scripts/gate.sh"), "--only", "python"],
+        cwd=out,
+        capture_output=True,
+        text=True,
+        env={**os.environ, "CI": "1"},
+    )
+    assert gate.returncode == 0, gate.stdout + gate.stderr
+    assert "gate: scope: no section; 1 changed path(s) since HEAD^1" in gate.stdout
+
+
+def test_ci_runs_a_touched_section_when_head_parent_is_not_the_base(tmp_path):
+    out = _scoped(tmp_path, ["python", "shell"])
+    _commit_file(out, "app.py", "x = 1\n")
+    git(out, "checkout", "-q", "main")
+    _commit_file(out, "docs/other.md", "other\n")
+    git(out, "checkout", "-q", "feat")
+    git(out, "merge", "-q", "--no-verify", "-m", "merge main into feat", "main")
+    env = {**os.environ, "CI": "1", "GATE_BASE": "main"}
+    gate = subprocess.run(
+        [str(out / "scripts/gate.sh"), "--only", "python"],
+        cwd=out,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    assert "gate: scope: python" in gate.stdout, gate.stdout + gate.stderr
+
+
+def test_an_edit_to_the_gate_script_scopes_to_every_section(tmp_path):
+    out = _scoped(tmp_path, ["python", "shell"])
+    _commit_file(out, "scripts/gate.sh", (out / "scripts/gate.sh").read_text() + "\n# edit\n")
+    env = {**os.environ, "CI": "1", "GATE_BASE": "main"}
+    gate = subprocess.run(
+        [str(out / "scripts/gate.sh"), "--only", "python", "--only", "shell"],
+        cwd=out,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    assert "gate: scope: python shell (" in gate.stdout, gate.stdout + gate.stderr
+
+
+def test_a_failed_target_fetch_makes_the_ci_gate_run_every_section(tmp_path):
+    out = render(tmp_path / "p", ["python", "typescript"])
+    step = {s["name"]: s for s in steps(out / ".onedev-buildspec.yml", "CI")}["Gate Python"]
+    script = tmp_path / "step.sh"
+    script.write_text(step["interpreter"]["commands"])
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "git").write_text('#!/bin/sh\n[ "$FETCH" = ok ]\n')
+    (bin_dir / "git").chmod(0o755)
+    work = tmp_path / "w"
+    (work / "scripts").mkdir(parents=True)
+    (work / "scripts/gate.sh").write_text('#!/bin/sh\necho "gate $*"\n')
+    (work / "scripts/gate.sh").chmod(0o755)
+    for fetch, full in (("ok", False), ("fail", True)):
+        env = {**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}", "FETCH": fetch}
+        run = subprocess.run(["sh", str(script)], cwd=work, env=env, capture_output=True, text=True)
+        assert run.returncode == 0, run.stderr
+        assert ("gate --only python --full" in run.stdout) is full, (fetch, run.stdout)
+        assert "gate --only python" in run.stdout or full
+
+
 def test_the_bare_gate_runs_the_section_of_a_changed_script_in_full(tmp_path):
     out = _scoped(tmp_path)
     _commit_file(out, "bin/tool", '#!/usr/bin/env bash\nset -eu\necho "$1"\n')
@@ -1595,10 +1795,12 @@ def test_a_section_over_its_budget_fails_and_names_its_slowest_step(tmp_path):
     out = _slow_local(tmp_path, 2, gate_fast_budget=1, gate_budget_reason="")
     gate = run_gate(out, "--fast", "--only", "local")
     assert gate.returncode == 1, gate.stdout + gate.stderr
-    assert "gate: the local section took 2 s; its fast budget is 1 s" in gate.stderr
+    # The step sleeps 2 s; a slow machine reports 3 s or more, so the test reads the bound, not one value.
+    took = re.search(r"gate: the local section took (\d+) s; its fast budget is 1 s", gate.stderr)
+    assert took and int(took.group(1)) >= 2, gate.stderr
     assert "its slowest steps:" in gate.stderr and "gate.local.sh" in gate.stderr
     assert "gate_budget_reason" in gate.stderr
-    assert (out / ".gate/fast.local").read_text() == "2\n"
+    assert int((out / ".gate/fast.local").read_text()) == int(took.group(1))
 
 
 def test_a_section_inside_its_budget_passes_and_leaves_the_tree_clean(tmp_path):
@@ -2256,3 +2458,67 @@ def test_the_full_gate_fails_when_an_app_loses_its_pstack_hook(tmp_path):
     gate = run_gate(out, "--only", "shell")
     assert gate.returncode == 1, gate.stdout + gate.stderr
     assert "needs pstack-mandate.md" in gate.stderr
+
+
+SPEC_DROPS = [
+    # (languages, answers, text to cut from the spec, job the message names)
+    (["shell"], {}, "git fetch --quiet origin", '"CI"'),
+    (["shell"], {}, "scripts/gate.sh --full", '"CI"'),
+    (["shell"], {"trust_green_ci": True}, "Trust a green CI build", '"CI on main"'),
+]
+
+
+def full_gate_in_ci(out: Path) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [str(out / "scripts/gate.sh"), "--full"],
+        cwd=out,
+        capture_output=True,
+        text=True,
+        env={**os.environ, "CI": "1"},
+    )
+
+
+def test_the_full_gate_names_a_seeded_spec_line_that_a_project_lacks(tmp_path):
+    for i, (langs, answers, cut, job) in enumerate(SPEC_DROPS):
+        out = render(tmp_path / f"p{i}", langs, **answers)
+        _repo(out)
+        git(out, "add", "-A")
+        if not answers and i == 0:
+            seeded = full_gate_in_ci(out)
+            assert seeded.returncode == 0, seeded.stdout + seeded.stderr
+        spec = out / ".onedev-buildspec.yml"
+        spec.write_text(spec.read_text().replace(cut, "removed"))
+        gate = full_gate_in_ci(out)
+        assert gate.returncode != 0, cut
+        err = gate.stderr.replace("\\", "")
+        assert f"the job {job} with" in err and cut.split()[0] in err, err
+
+
+@pytest.mark.parametrize("langs", [["python"], ["dotnet", "python", "shell"]])
+def test_every_gate_call_in_the_seeded_spec_has_a_drift_pattern(tmp_path, langs):
+    """A template PR that adds a scripts/gate.sh call to the spec must add its pattern."""
+    out = render(tmp_path / "p", langs, trust_green_ci=True)
+    patterns = re.findall(
+        r"^\s+['\"]([^|'\"]+)\|(.+?)['\"]$",
+        (out / "scripts/gate.sh").read_text().split("pattern=(", 1)[1].split("\n    )", 1)[0],
+        re.M,
+    )
+    spec = yaml.load((out / ".onedev-buildspec.yml").read_text(), Loader=SpecLoader)
+    calls = [
+        (job["name"], line.strip())
+        for job in spec["jobs"]
+        for step in job["steps"]
+        for line in step.get("interpreter", {}).get("commands", "").splitlines()
+        if "scripts/gate.sh" in line and not line.strip().startswith("#")
+    ]
+    assert calls
+    for job, line in calls:
+        # A pattern of its own: it matches this call and no other call of the job.
+        own = [
+            rx
+            for j, rx in patterns
+            if j == job
+            and re.search(rx, line)
+            and not any(re.search(rx, other) for o, other in calls if o == job and other != line)
+        ]
+        assert own, (job, line)
