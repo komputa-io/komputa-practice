@@ -1,0 +1,6 @@
+# Findings of scripts/skill-scan.sh that were read and accepted. A new finding is not covered and fails the scan.
+version: 2
+rules:
+  - id: "PE3"
+    path: "evals/trigger.json"
+    reason: "False positive: trigger phrases for the skill's own eval; they are test queries, not instructions."

@@ -1,0 +1,40 @@
+# Every night at {{ '%02d:%02d' | format(nightly_hour, nightly_minute) }} UTC (the same slot as deslop-nightly), scan the whole default branch's history
+# with TruffleHog for secrets that still work, and file one issue labelled
+# `priority: high` for each (the label must exist in the repo). TruffleHog tests each
+# candidate secret with the credential's own provider, so the job needs outbound
+# internet, and it sends the candidate to that provider. The issue and the log never
+# hold the secret value. The image is pinned by digest; update-deps.yml moves it with
+# every other image pin. Start it by hand with workflow_dispatch.
+name: trufflehog-nightly
+
+on:
+  schedule:
+    - cron: '{{ nightly_minute }} {{ nightly_hour }} * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  trufflehog-nightly:
+    name: Secret scan, nightly
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      # Run as this user, so the findings file is not root's and the runner can remove it.
+      - run: >-
+          docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -v "$PWD:/repo" -w /repo --entrypoint bash
+          ghcr.io/trufflesecurity/trufflehog:3.99.8@sha256:674b2f187620a19df77f44cf9a7d77efcc581a5662accef2f2739cbb46ba4a3a scripts/trufflehog-scan.sh
+      - run: scripts/trufflehog-issues.sh --forge github --findings .trufflehog/findings.jsonl --post
+        env:
+          GH_TOKEN: {% raw %}${{ github.token }}{% endraw %}
+          GH_REPO: {% raw %}${{ github.repository }}{% endraw %}
+      - run: rm -rf .trufflehog
+        if: {% raw %}${{ always() }}{% endraw %}

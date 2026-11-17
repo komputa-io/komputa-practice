@@ -1,0 +1,11 @@
+# The Trivy release that scripts/install-trivy.sh installs for the gate's
+# dependency scan, and the SHA-256 of its linux-64bit tarball (from the release's
+# checksums file, whose cosign signature scripts/update-deps.sh verifies before it
+# moves this pin). scripts/update-deps.sh moves both to the newest release that is
+# at least min_age_days old. Never v0.69.4 to v0.69.6: those releases were
+# compromised (CVE-2026-33634).
+# Seeded once; the repo owns it.
+version=0.76.2
+# pragma: allowlist nextline secret
+sha256=bc0fc726e017b8927a62b2d3531d7a84ee01769daf5c99ed866dced54089fdbf
+min_age_days=7

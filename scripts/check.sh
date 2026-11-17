@@ -139,6 +139,43 @@ herdr_checks() {
   (cd app && "${run[@]}" node --test ../herdr/sitrep-live/logic.test.mjs)
 }
 
+# Dependency scan: Trivy over the lock files, same rules as the template's gate (template/scripts/gate.sh.jinja). HIGH or
+# CRITICAL with a fix fails. Accept a finding in .trivyignore.yaml: each entry needs an id and a statement that says why.
+# scripts/install-trivy.sh and scripts/trivy.pin are links to the template's own copies. The vulnerability database comes
+# from a registry on each run; TRIVY_SKIP_DB_UPDATE=true scans offline with an earlier download in .gate/trivy.
+trivy_scan() {
+  local locks=() f ignore=.trivyignore.yaml
+  while IFS= read -r f; do
+    [[ -f $f ]] && locks+=("$f")
+  done < <(git ls-files -- 'uv.lock' '*/uv.lock' 'package-lock.json' '*/package-lock.json' 'packages.lock.json' '*/packages.lock.json')
+  ((${#locks[@]})) || return 0
+  if [[ -f $ignore ]]; then
+    awk '
+      function check() { if (open && !has) { printf "%s: line %d: the entry has no statement (the reason)\n", FILENAME, open; bad = 1 } }
+      /^[[:space:]]*-[[:space:]]+id:/ { check(); open = NR; has = 0 }
+      /^[[:space:]]+statement:[[:space:]]*[^[:space:]]/ { has = 1 }
+      END { check(); exit bad }
+    ' "$ignore" >&2 || {
+      printf 'check: %s: give each entry a statement that says why the finding is accepted\n' "$ignore" >&2
+      return 1
+    }
+  fi
+  local trivy copy=.gate/trivy-scan
+  trivy=$(scripts/install-trivy.sh) || return 1
+  rm -rf -- "$copy"
+  for f in "${locks[@]}"; do
+    mkdir -p -- "$copy/$(dirname -- "$f")"
+    cp -- "$f" "$copy/$f"
+  done
+  local args=(fs --scanners vuln --include-dev-deps --severity "HIGH,CRITICAL" --ignore-unfixed --exit-code 1 --no-progress
+    --skip-version-check --disable-telemetry --cache-dir .gate/trivy)
+  [[ ! -f $ignore ]] || args+=(--ignorefile "$PWD/$ignore")
+  timeout 600 "$trivy" "${args[@]}" "$copy" || {
+    printf 'check: a lock file has a HIGH or CRITICAL vulnerability with a fix (named above), or Trivy could not get its database. Upgrade the package, or accept the finding with a reason in %s\n' "$ignore" >&2
+    return 1
+  }
+}
+
 step scrub scripts/scrub-check.sh
 step 'no model names' no_model_names
 step shellcheck tool --from shellcheck-py shellcheck -- "${scripts[@]}"
@@ -152,6 +189,9 @@ step 'js syntax' js_syntax
 step app app_checks
 step 'herdr mod' herdr_checks
 step 'skill refs' scripts/check-skill-refs.sh
+# SkillSpector over skills/: static analysis only, no model, no network. Accepted findings: .skillspector-baselines/.
+step 'skill scan' scripts/skill-scan.sh
+step 'trivy' trivy_scan
 step 'shell tests' run_tests
 
 failed=()

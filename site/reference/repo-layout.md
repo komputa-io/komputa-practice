@@ -22,7 +22,7 @@ Each path in the practice repo, and what it holds.
 | `docs/model-selection.md` | How each agent's model is chosen: the role lines and the move-up rule. |
 | `docs/quality-funnel.png` | The quality funnel picture. `docs/quality-funnel.html` is its source. |
 | `scripts/program-scorecard.py` | Reads the merged pull requests of a repo from git and prints a scorecard: pull requests by kind, the lines each added, and the measures of "What success is". |
-| `scripts/scheduled-failures.py` | Posts to Mattermost `#alerts` each failed scheduled OneDev job (Update dependencies, Deslop nightly) that it has not reported before. Run it from a timer; it needs `ODEV_HOST`, `ODEV_TOKEN` and the `#alerts` webhook. |
+| `scripts/scheduled-failures.py` | Posts to Mattermost `#alerts` each failed scheduled OneDev job (Update dependencies, Deslop nightly, Secret scan nightly) that it has not reported before. Run it from a timer; it needs `ODEV_HOST`, `ODEV_TOKEN` and the `#alerts` webhook. |
 | `docs/context-economics.md` | Where the tokens go when agents run as workers: what we measured on a real project, what we learned, and why the budget and wait rules say what they say. |
 | `hooks/block-secret-write.sh` | A Claude Code `PreToolUse` hook for Write and Edit (and Codex `apply_patch`). It refuses content that matches a secret pattern, and names the machine's secret tool from `HOOK_SECRET_TOOL`. |
 | `hooks/block-credential-read.sh` | A Claude Code `PreToolUse` hook for Read and Bash. It refuses reading a credential file (SSH keys, `.netrc`, `.env`, the Claude credentials); counts and key names pass. It also refuses a call to OneDev's `projects/<id>/setting` document, which holds every job secret in clear. |

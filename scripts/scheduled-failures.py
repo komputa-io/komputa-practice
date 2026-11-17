@@ -3,8 +3,8 @@
 
     scripts/scheduled-failures.py [--job NAME ...] [--hours 26] [--dry-run]
 
-Reads the newest builds of each named job (default: Update dependencies and
-Deslop nightly) across every project, and posts one Mattermost message listing
+Reads the newest builds of each named job (default: Update dependencies,
+Deslop nightly and Secret scan nightly) across every project, and posts one Mattermost message listing
 each failed build that it has not reported before. Run it from a timer, once or
 twice a day. It keeps the ids it reported in a state file, so a failure is
 reported once.
@@ -29,7 +29,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-JOBS = ["Update dependencies", "Deslop nightly"]
+JOBS = ["Update dependencies", "Deslop nightly", "Secret scan nightly"]
 BAD = {"FAILED", "TIMED_OUT"}
 
 

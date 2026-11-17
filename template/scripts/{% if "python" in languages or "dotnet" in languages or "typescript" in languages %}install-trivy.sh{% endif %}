@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# Installs the Trivy release pinned in scripts/trivy.pin into .gate/bin, checked
+# against the pinned sha256, and prints the path of the binary. Safe to re-run: it
+# reuses a binary of that version. A trivy on PATH of the pinned version is used as it is.
+#   scripts/install-trivy.sh
+# Managed by project-standards: change the template, not this copy.
+set -Eeuo pipefail
+shopt -s inherit_errexit
+trap 'printf "%s: line %d: %s exited %d\n" "${0##*/}" "$LINENO" "$BASH_COMMAND" "$?" >&2' ERR
+die() {
+  printf 'install-trivy: %s\n' "$*" >&2
+  exit 1
+}
+
+[[ $# == 0 ]] || {
+  printf 'usage: scripts/install-trivy.sh\n' >&2
+  exit 2
+}
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+version=$(sed -n 's/^version=//p' "$root/scripts/trivy.pin")
+sha256=$(sed -n 's/^sha256=//p' "$root/scripts/trivy.pin")
+[[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && "$sha256" =~ ^[0-9a-f]{64}$ ]] || die "scripts/trivy.pin has no usable version and sha256"
+# The compromised releases: refuse them even if a pin names one.
+case "$version" in 0.69.4 | 0.69.5 | 0.69.6) die "Trivy $version was compromised (CVE-2026-33634)" ;; *) ;; esac
+
+has_version() { [[ -x "$1" && "$("$1" --version 2>/dev/null | sed -n 's/^Version: //p')" == "$version" ]]; }
+bin="$root/.gate/bin/trivy"
+# shellcheck disable=SC2310 # the status is the answer.
+if path=$(command -v trivy) && has_version "$path"; then
+  printf '%s\n' "$path"
+  exit 0
+fi
+# shellcheck disable=SC2310 # the status is the answer.
+if has_version "$bin"; then
+  printf '%s\n' "$bin"
+  exit 0
+fi
+[[ "$(uname -sm)" == "Linux x86_64" ]] || die "no pinned binary for $(uname -sm); install Trivy $version and put it on PATH"
+
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+curl -fsSL --max-time 180 -o "$tmp/trivy.tar.gz" \
+  "https://github.com/aquasecurity/trivy/releases/download/v$version/trivy_${version}_Linux-64bit.tar.gz" \
+  || die "download of Trivy $version failed"
+printf '%s  %s\n' "$sha256" "$tmp/trivy.tar.gz" | sha256sum --check --quiet - \
+  || die "Trivy $version does not match its pinned sha256"
+tar -xzf "$tmp/trivy.tar.gz" -C "$tmp" trivy
+mkdir -p "${bin%/*}"
+install -m 0755 "$tmp/trivy" "$bin"
+printf 'install-trivy: installed Trivy %s in %s\n' "$version" "${bin%/*}" >&2
+printf '%s\n' "$bin"

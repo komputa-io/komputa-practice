@@ -59,13 +59,17 @@ Use this guide to start using the practice in a repo that you already have. The 
    | Job secret | Job that reads it | When it is needed |
    |---|---|---|
    | `ONEDEV_COMMENT_TOKEN` | Duplicate code | Always. Set it with `--branches '**'`, because a pull request's build reads it. Use the token of an account that may only comment on pull requests. A missing secret fails this job, not CI |
-   | `ONEDEV_ISSUES_TOKEN` | Deslop nightly | Always. The token of an account that may write issues |
-   | `ONEDEV_USER` and `ONEDEV_TOKEN` | Update dependencies | Always. The login and the token of an account that can push a branch and open a pull request. The "Merge dependency update" job uses the same two secrets |
+   | `ONEDEV_ISSUES_TOKEN` | Deslop nightly, Secret scan nightly | Always. The token of an account that may write issues |
+   | `ONEDEV_USER` and `ONEDEV_TOKEN` | Update dependencies | Always. The login and the token of an account that can push a branch and open a pull request. The "Merge dependency update" job uses the same two secrets, and the account must also be allowed to run jobs, because the job starts CI on a pull request whose merge preview moved |
    | `ONEDEV_TOKEN` | CI on main | Only with the `trust_green_ci` answer. A token that can read this project's builds, authorized on the default branch only |
    | `PKG_USER` and `PKG_TOKEN` | CI, CI on main, Update dependencies | Only with a private package index. A read-only account |
    | `NUGET_USER` and `NUGET_TOKEN` | CI, CI on main, Update dependencies | Only with a private NuGet feed. A read-only account |
 
+   The CI file also holds a nightly secret scan, at the same time as the Deslop nightly. TruffleHog reads the whole history of the default branch and keeps only secrets that still work. It tests each one by calling the provider that issued it, so the candidate leaves your CI runner for that provider. Each live secret becomes one high-priority issue that names the file, line and commit and never holds the value: on GitHub, create the label `priority: high` first; on OneDev, the Priority field needs the value `Major`. The tool's image is pinned by digest, and the weekly dependency job moves the pin. A OneDev repo made before this job existed must copy the "Secret scan nightly" job from the template: the full gate names it as missing.
+
    CI itself needs no secret unless you use a private index or feed. On GitHub the workflows use repository secrets of the same names where they need any.
+
+   On GitHub, the weekly refresh also needs the repository secret `DEPS_PR_TOKEN`: a fine-grained personal access token with Contents, Pull requests and Workflows read and write on that repo. Only the job that opens the pull request reads it, and the pull request's own gate then runs. Set it with `scripts/set-deps-pr-token.sh --apply owner/repo`. Turn on the repository setting "Allow auto-merge". The setting "Allow GitHub Actions to create and approve pull requests" is not needed.
 
 7. **Open a pull request** with the template's files, the folded checks and the CI file. Merge it when the gate is green on its head commit.
 

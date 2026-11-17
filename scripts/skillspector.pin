@@ -1,0 +1,8 @@
+# The NVIDIA SkillSpector release that scripts/skill-scan.sh installs, for the
+# scan of skills/. SkillSpector is not on PyPI: it installs from its git repo.
+# tag v2.13.4 (published 2026-11-04); the commit is the pin, a tag can move.
+# Its uv.lock holds a hash for each dependency, and the script installs with
+# --frozen, so nothing resolves at install time.
+# Keep it at least 7 days old.
+commit=54824463814a0be01360792523ec7245a69190fc
+python=3.13

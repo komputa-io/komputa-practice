@@ -1,0 +1,21 @@
+# Findings of scripts/skill-scan.sh that were read and accepted. A new finding is not covered and fails the scan.
+version: 2
+rules:
+  - id: "AS1"
+    path: "SKILL.md"
+    reason: "False positive: SKILL.md tells agents how to start an hc worker and where a worker takes its model. It gives the reader no instruction to widen its own access."
+  - id: "RA2"
+    path: "SKILL.md"
+    reason: "False positive: the text tells workers never to open a window on the operator's screen. It is the safety rule, not a rogue-agent instruction."
+  - id: "RA2"
+    path: "assets/templates/fixer.md"
+    reason: "False positive: the text tells workers never to open a window on the operator's screen. It is the safety rule, not a rogue-agent instruction."
+  - id: "RA2"
+    path: "assets/templates/implementer.md"
+    reason: "False positive: the text tells workers never to open a window on the operator's screen. It is the safety rule, not a rogue-agent instruction."
+  - id: "RA2"
+    path: "assets/templates/reviewer.md"
+    reason: "False positive: the text tells workers never to open a window on the operator's screen. It is the safety rule, not a rogue-agent instruction."
+  - id: "RA2"
+    path: "assets/templates/owner.md"
+    reason: "False positive: the text tells workers never to open a window on the operator's screen. It is the safety rule, not a rogue-agent instruction."

@@ -1,5 +1,7 @@
 {%- set langs = [] -%}
 {%- for l in ['python', 'dotnet', 'typescript', 'rust'] if l in languages -%}{%- set _ = langs.append(l) -%}{%- endfor -%}
+{%- set scan = 'python' in langs or 'dotnet' in langs or 'typescript' in langs -%}
+{%- set secs = langs + ['images', 'deslop'] + (['trivy'] if scan else []) -%}
 #!/usr/bin/env bash
 # Refresh dependencies within their ranges and open a PR. Run weekly by CI
 # (the "Update dependencies" job); safe to run by hand. scripts/forge/{{ forge }}.sh
@@ -14,7 +16,7 @@
 #   scripts/update-deps.sh            refresh, commit to a branch, open a PR
 #   scripts/update-deps.sh --dry-run  refresh and show the diff; commit nothing
 #   scripts/update-deps.sh --refresh-only [--only SECTION ...]
-#                                     refresh only, commit nothing. Sections: {{ (langs + ['images', 'deslop']) | join(', ') }}
+#                                     refresh only, commit nothing. Sections: {{ secs | join(', ') }}
 #   scripts/update-deps.sh --publish-only
 #                                     commit what a refresh left and open a PR{% if forge == 'onedev' %}
 #   scripts/update-deps.sh --merge-ready
@@ -34,9 +36,11 @@ die() {
   exit 1
 }
 
-root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# UPDATE_DEPS_ROOT lets CI run a trusted copy of this script on a patched tree.
+root="${UPDATE_DEPS_ROOT:-$here/..}"
 cd "$root"
-sections=({{ (langs + ['images', 'deslop']) | join(' ') }})
+sections=({{ secs | join(' ') }})
 usage() {
   printf 'usage: scripts/update-deps.sh [--dry-run | --refresh-only [--only SECTION ...] | --publish-only{% if forge == 'onedev' %} | --merge-ready{% endif %}]\nsections: %s\n' "${sections[*]}" >&2
   exit 2
@@ -75,7 +79,7 @@ if [[ "$step" == all ]]; then
   [[ -z "$(git status --porcelain)" ]] || die "the working tree has changes; commit or stash them first"
 fi
 
-forge=scripts/forge/{{ forge }}.sh
+forge="$here/forge/{{ forge }}.sh"
 # only_dependency_files [REV]: print each file REV (HEAD) changed that is not a
 # dependency file. A lock file or manifest is one; so is the Deslop pin; so is any
 # file whose diff moves only sha256: image digests. Nothing printed means the PR
@@ -84,7 +88,7 @@ only_dependency_files() {
   local f rev=${1:-HEAD}
   while IFS= read -r f; do
     case "${f##*/}" in
-      uv.lock | pyproject.toml | package.json | package-lock.json | Directory.Packages.props | Cargo.toml | Cargo.lock | deslop.pin) continue ;;
+      uv.lock | pyproject.toml | package.json | package-lock.json | Directory.Packages.props | Cargo.toml | Cargo.lock | deslop.pin | trivy.pin) continue ;;
       dotnet-tools.json) [[ "$f" == */.config/dotnet-tools.json || "$f" == .config/dotnet-tools.json ]] && continue ;;
     esac
     # shellcheck disable=SC2310 # the status is the answer.
@@ -105,7 +109,8 @@ digest_only() {
 {%- if forge == 'onedev' %}
 if [[ "$step" == merge ]]; then
   # Runs on the default branch, where the job's secrets are readable. It merges the
-  # PR only while the merge preview that CI passed is built on the branch tip now,
+  # PR only while CI passed on the merge preview as it is now (when only the default
+  # branch moved, it starts CI on the new preview and a later run merges),
   # and only for dependency files; the forge checks the preview again at the merge.
   "$forge" check
   git fetch -q origin chore/deps-weekly
@@ -115,17 +120,22 @@ if [[ "$step" == merge ]]; then
     printf 'update-deps: no update PR is open\n'
     exit 0
   }
-  built=$("$forge" ci-passed "$number")
-  [[ -n "$built" ]] || {
-    printf 'update-deps: CI has not passed on #%s yet\n' "$number"
+  git fetch -q origin "refs/pulls/$number/merge"
+  preview=$(git rev-parse FETCH_HEAD)
+  [[ "$(git rev-parse FETCH_HEAD^2)" == "$tip" ]] || {
+    printf 'update-deps: #%s: the branch moved after CI passed; not merged\n' "$number"
     exit 0
   }
-  git fetch -q origin "refs/pulls/$number/merge"
-  [[ "$(git rev-parse FETCH_HEAD)" == "$built" && "$(git rev-parse FETCH_HEAD^2)" == "$tip" ]] \
-    || {
-      printf 'update-deps: #%s: the branch moved after CI passed; not merged\n' "$number"
-      exit 0
-    }
+  built=$("$forge" ci-passed "$number")
+  if [[ "$built" != "$preview" ]]; then
+    # Only the target moved: OneDev made a new preview and runs no CI on it.
+    if "$forge" ci-start "$number" "$preview"; then
+      printf 'update-deps: #%s: the default branch moved; started CI on the new merge preview\n' "$number"
+    else
+      printf 'update-deps: CI has not passed on #%s yet\n' "$number"
+    fi
+    exit 0
+  fi
   blockers=$(only_dependency_files "$tip")
   [[ -z "$blockers" ]] || {
     printf 'update-deps: #%s changes files that are not dependency files; a person merges it\n' "$number"
@@ -359,6 +369,59 @@ if [[ "$step" != publish ]]; then
       say "Deslop moves from $old to $new"
     )
   fi
+{%- if scan %}
+  # Trivy, for the gate's dependency scan: scripts/trivy.pin moves to the newest
+  # release that is at least min_age_days old (seven when the pin has none). The
+  # pin moves only when the release's checksums file passes a cosign (sigstore)
+  # check against Trivy's release workflow; then the tarball's sha256 comes from
+  # that file. Never v0.69.4 to v0.69.6 (compromised, CVE-2026-33634). A failed
+  # lookup or check leaves the pin as it is.
+  if [[ -n "${want[trivy]-}" && -f scripts/trivy.pin ]]; then
+    (
+      say() {
+        printf 'update-deps: trivy: %s\n' "$1"
+        printf '%s\n' "$1" >>"$notes"
+      }
+      old=$(sed -n 's/^version=//p' scripts/trivy.pin)
+      days=$(sed -n 's/^min_age_days=//p' scripts/trivy.pin)
+      [[ "$days" =~ ^[0-9]{1,3}$ ]] || days=7
+      cutoff=$(($(date -u +%s) - days * 86400))
+      new=
+      api=https://api.github.com/repos/aquasecurity/trivy
+      if list=$(curl -fsS --max-time 30 "$api/releases?per_page=30" | grep -E '^    "(tag_name|draft|prerelease|published_at)":'); then
+        while read -r tag_line && read -r draft_line && read -r pre_line && read -r at_line; do
+          [[ "$draft_line$pre_line" == *true* ]] && continue
+          tag=$(sed -E 's/.*"v([0-9.]+)".*/\1/' <<<"$tag_line")
+          at=$(date -u -d "$(sed -E 's/.*"([^"]+)",?$/\1/' <<<"$at_line")" +%s 2>/dev/null) || continue
+          [[ "$tag" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && "${tag%%.*}" == "${old%%.*}" ]] || continue
+          [[ "$tag" != 0.69.4 && "$tag" != 0.69.5 && "$tag" != 0.69.6 ]] || continue
+          ((at <= cutoff)) || continue
+          [[ "$(printf '%s\n%s\n' "$old" "$tag" | sort -V | tail -n 1)" == "$tag" ]] && new=$tag
+          break
+        done <<<"$list"
+      fi
+      if [[ -z "$new" || "$new" == "$old" ]]; then
+        exit 0
+      fi
+      tmp=$(mktemp -d)
+      trap 'rm -rf "$tmp"' EXIT
+      base=https://github.com/aquasecurity/trivy/releases/download/v$new/trivy_${new}_checksums.txt
+      sum=
+      if curl -fsSL --max-time 30 -o "$tmp/sums" "$base" && curl -fsSL --max-time 30 -o "$tmp/sums.bundle" "$base.sigstore.json" \
+        && uvx --quiet --exclude-newer "7 days" sigstore verify identity --bundle "$tmp/sums.bundle" \
+          --cert-identity "https://github.com/aquasecurity/trivy/.github/workflows/reusable-release.yaml@refs/tags/v$new" \
+          --cert-oidc-issuer https://token.actions.githubusercontent.com "$tmp/sums" >/dev/null 2>&1; then
+        sum=$(sed -n "s/^\([0-9a-f]\{64\}\)  trivy_${new}_Linux-64bit\.tar\.gz\$/\1/p" "$tmp/sums")
+      fi
+      if [[ ! "$sum" =~ ^[0-9a-f]{64}$ ]]; then
+        say "Trivy stays at $old: no signed checksum for $new"
+        exit 0
+      fi
+      sed -i -e "s/^version=.*/version=$new/" -e "s/^sha256=.*/sha256=$sum/" scripts/trivy.pin
+      say "Trivy moves from $old to $new"
+    )
+  fi
+{%- endif %}
   if [[ "$step" == refresh ]]; then
     printf 'update-deps: refreshed %s; nothing committed\n' "${only[*]}"
     exit 0

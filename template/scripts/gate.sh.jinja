@@ -1,5 +1,6 @@
 {%- set langs = [] -%}
 {%- for l in ['python', 'dotnet', 'typescript', 'rust'] if l in languages -%}{%- set _ = langs.append(l) -%}{%- endfor -%}
+{%- set scan = 'python' in langs or 'dotnet' in langs or 'typescript' in langs -%}
 #!/usr/bin/env bash
 # The gate: every check a change must pass. Safe to re-run. The only gate
 # script in the repo: CI, the hooks and agents all run this one, and
@@ -154,6 +155,13 @@ section_of() {
     printf '%s\n' "${sections[@]}"
     return
   }
+{%- if scan %}
+  # A lock file also changes what the dependency scan reads, and the shell section runs it.
+  case "$name" in
+    uv.lock | package-lock.json | packages.lock.json | .trivyignore.yaml) printf 'shell\n' ;;
+    *) ;;
+  esac
+{%- endif %}
   case "$name" in
 {%- if 'python' in langs %}
     *.py | pyproject.toml | uv.lock | uv.toml | ruff.toml | pyrightconfig.json | pytest.toml)
@@ -507,6 +515,49 @@ secret_scan() {
   fi
 }
 
+{%- if scan %}
+
+# The dependency scan (full run only). Trivy reads every uv.lock,
+# package-lock.json and packages.lock.json that git tracks, for known
+# vulnerabilities, and fails on HIGH and CRITICAL ones that have a fix. Rust keeps
+# cargo deny. The fast run skips it: the Trivy binary and its vulnerability
+# database take longer than the pre-commit budget, and CI scans the same files.
+# Trivy downloads its database from a registry on each run (cached in .gate/trivy),
+# so offline the scan fails: with an earlier download in .gate/trivy, set
+# TRIVY_SKIP_DB_UPDATE=true to scan with that. The binary is pinned in
+# scripts/trivy.pin. Accept a finding on record in .trivyignore.yaml: each entry
+# needs an id and a statement that gives the reason.
+trivy_scan() {
+  local locks=() f ignore=.trivyignore.yaml
+  while IFS= read -r f; do
+    [[ -f "$f" ]] && locks+=("$f")
+  done < <(git ls-files -- 'uv.lock' '*/uv.lock' 'package-lock.json' '*/package-lock.json' 'packages.lock.json' '*/packages.lock.json')
+  [[ -n "${locks[*]}" ]] || return 0
+  if [[ -f "$ignore" ]]; then
+    awk '
+      function check() { if (open && !has) { printf "%s: line %d: the entry has no statement (the reason)\n", FILENAME, open; bad = 1 } }
+      /^[[:space:]]*-[[:space:]]+id:/ { check(); open = NR; has = 0 }
+      /^[[:space:]]+statement:[[:space:]]*[^[:space:]]/ { has = 1 }
+      END { check(); exit bad }
+    ' "$ignore" >&2 || die "$ignore: give each entry a statement that says why the finding is accepted"
+  fi
+  local trivy copy=$gate_dir/trivy-scan
+  trivy=$(scripts/install-trivy.sh) || die "no Trivy binary; see above"
+  rm -rf "$copy"
+  mkdir -p "$copy"
+  for f in "${locks[@]}"; do
+    mkdir -p "$copy/$(dirname -- "$f")"
+    cp -- "$f" "$copy/$f"
+  done
+  local args=(fs --scanners vuln --severity "HIGH,CRITICAL" --ignore-unfixed --exit-code 1 --no-progress
+    --skip-version-check --disable-telemetry --cache-dir "$gate_dir/trivy")
+  [[ ! -f "$ignore" ]] || args+=(--ignorefile "$root/$ignore")
+  # Trivy exits 1 for a finding and for an error alike; its own text names which.
+  timeout 600 "$trivy" "${args[@]}" "$copy" \
+    || die "dependency scan failed: a lock file has a HIGH or CRITICAL vulnerability with a fix (named above), or Trivy could not get its database. Upgrade the package, or accept the finding with a reason in $ignore"
+}
+{%- endif %}
+
 if [[ "$mode" == fast ]]; then
   files=$(staged)
   if [[ -n "$files" ]]; then
@@ -690,6 +741,9 @@ if [[ -n "${want[shell]-}" ]]; then
       done < <(git rev-list "$base..HEAD")
     fi
   fi
+{%- if scan %}
+  [[ "$mode" != full ]] || timed trivy trivy_scan
+{%- endif %}
   # Vendored or retired folders, kept as they are (the shell_exclude answer):
   # no lint, and a gate script there is not a second gate.
   skip=({% for d in shell_exclude %}':!{{ d }}/'{% if not loop.last %} {% endif %}{% endfor %})
@@ -744,6 +798,8 @@ if [[ -n "${want[shell]-}" ]]; then
       'Duplicate code|PullRequestUpdateTrigger'
       'Duplicate code|scripts/deslop-decisions\.sh'
       'Deslop nightly|cronExpression: 0 {{ nightly_minute }} {{ nightly_hour }} \* \* \?'
+      'Secret scan nightly|cronExpression: 0 {{ nightly_minute }} {{ nightly_hour }} \* \* \?'
+      'Secret scan nightly|scripts/trufflehog-scan\.sh'
       "Update dependencies|cronExpression: 0 {{ weekly_minute }} {{ weekly_hour }} \? \* {{ ['MON','TUE','WED','THU','FRI','SAT','SUN'][weekly_day] }}"
       # Later fixes depend on these gate-step lines. A template PR that adds a
       # scripts/gate.sh call to the spec adds its pattern here (a test holds it).
@@ -796,6 +852,7 @@ if [[ -n "${want[shell]-}" ]]; then
       "$flows/gate.yml|fetch-depth: 0"
       "$flows/gate.yml|scripts/gate\.sh --(full|only shell)"
       "$flows/deslop-nightly.yml|cron: '{{ nightly_minute }} {{ nightly_hour }} \* \* \*'"
+      "$flows/trufflehog-nightly.yml|cron: '{{ nightly_minute }} {{ nightly_hour }} \* \* \*'"
       "$flows/update-deps.yml|cron: '{{ weekly_minute }} {{ weekly_hour }} \* \* {{ (weekly_day + 1) % 7 }}'"
     )
     for want in "${pattern[@]}"; do

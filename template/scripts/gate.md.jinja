@@ -10,13 +10,37 @@ Change them in the project template (komputa-practice).
 |---|---|
 | `scripts/gate.sh --fast` | On commit (the pre-commit hook): format, lint and secret scan on staged files, about 5 s. It refuses a staged file that has more changes on disk |
 | `scripts/gate.sh` | The default while you build: the full checks of only the sections that the diff since the merge base touches (docs alone run none). A path that maps to no section, no merge base or no change runs every section; the gate says which on one line. Skips a clean tree that already passed |
-| `scripts/gate.sh --full` | Before a PR and in CI: every section in full (format, lint, type check, every test), and a secret scan of the files the branch changed (every tracked file when there is no merge base); a key committed with `--no-verify` fails CI. Must pass before a PR |
+| `scripts/gate.sh --full` | Before a PR and in CI: every section in full (format, lint, type check, every test), and a secret scan of the files the branch changed (every tracked file when there is no merge base); a key committed with `--no-verify` fails CI. A Python, .NET or TypeScript project also gets the dependency scan (below). Must pass before a PR |
 | `scripts/gate.sh --only SECTION` | One section only, for example `--only shell`. CI runs one per image. In CI a section whose files the change does not touch is skipped (the diff against the target branch, or the first parent of a merge preview); shell and local always run, because the secret scan is in shell |
 
 - Section budgets: each section writes its time to `.gate/` and fails the gate
   over its budget: fast {{ gate_fast_budget }} s{% if gate_full_budget %}, full {{ gate_full_budget }} s{% endif %}. The failure names the slowest
   tests or steps. Raise a budget only with `gate_budget_reason` in
   `.copier-answers.yml`.
+{%- if 'python' in languages or 'dotnet' in languages or 'typescript' in languages %}
+- Dependency scan: a full run (CI) scans every `uv.lock`, `package-lock.json` and
+  `packages.lock.json` that git tracks, for known vulnerabilities, with Trivy
+  (`scripts/install-trivy.sh` installs the release pinned in `scripts/trivy.pin`,
+  checked by sha256). It fails on HIGH and CRITICAL findings that have a fix, and
+  names each package and CVE. Fix it by upgrading the package. To accept a finding,
+  add it to `.trivyignore.yaml` with a reason; the gate refuses an entry without one:
+
+  ```yaml
+  vulnerabilities:
+    - id: CVE-2026-0001
+      statement: The vulnerable function is never called here.
+      expired_at: 2027-03-01 # optional: the acceptance lapses on this date
+  ```
+
+  `--fast` does not run it: the Trivy binary and its vulnerability database take
+  longer than the 5 s budget, and CI scans the same files. A lock file change also
+  runs the shell section in the bare command, where the scan lives. Trivy downloads
+  its database on each run (cached in `.gate/trivy`), so the scan needs the network;
+  offline it fails, unless an earlier run left a database and you set
+  `TRIVY_SKIP_DB_UPDATE=true`. Rust keeps `cargo deny`. Development dependencies are
+  not scanned. The weekly dependency job moves the pin to a release at least seven
+  days old, after it checks the release's cosign signature.
+{%- endif %}
 - Test lines: a full run prints the source lines and test lines the branch adds
   against its merge base. It never fails on them. How many tests a PR needs
   follows risk: see "Tests follow risk" in `komputa-practice`
@@ -41,9 +65,25 @@ Change them in the project template (komputa-practice).
 - No hook runs on push. CI runs the full gate on the pull request.
 - The build spec is seeded once and then belongs to the repo, so `copier update`
   never changes it. `scripts/gate.sh --full` checks it for the lines that the
-  template's gate depends on (the Deslop and dependency jobs, the target-branch
+  template's gate depends on (the Deslop, secret scan and dependency jobs, the target-branch
   fetch and `CI=true` in the gate steps, and the trust jobs when `trust_green_ci`
   is on) and names each one that is missing. Copy the line from the template.
+
+## The nightly secret scan
+
+- The job "Secret scan nightly" (`.github/workflows/trufflehog-nightly.yml` on GitHub) runs at
+  the same time as the Deslop nightly. It scans the whole history of `{{ default_branch }}` with
+  TruffleHog (`scripts/trufflehog-scan.sh`) and keeps only secrets that are verified live.
+- TruffleHog verifies a secret by calling the provider that issued it, so each candidate
+  leaves the CI runner for that provider. The job needs outbound internet.
+- Each live secret becomes one high-priority issue (`scripts/trufflehog-issues.sh`): GitHub
+  label `priority: high`, which must exist in the repo, or OneDev `Priority=Major`. A
+  fingerprint of detector, commit, file and line stops a second issue, open or closed. At most
+  10 issues a night. The issue says where the secret is and never holds the value; neither does
+  the job log. Rotate the credential first. Rewriting history is optional once it is revoked.
+- The image is pinned by tag and digest in the job. The weekly "Update dependencies" job moves
+  the digest with the other image pins, and only to an image seven days old or more.
+- On OneDev the job reads the secret `ONEDEV_ISSUES_TOKEN`, as the Deslop nightly does.
 
 ## The repo's own checks
 

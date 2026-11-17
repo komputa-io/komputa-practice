@@ -38,6 +38,8 @@ Use this guide for one pull request: a bug fix, a small feature, a refactor or a
    scripts/gate.sh --full   # everything, before the pull request
    ```
 
+   The full gate also scans the project's lock files (`uv.lock`, `package-lock.json`, `packages.lock.json`) for known vulnerabilities with Trivy, and fails on a HIGH or CRITICAL one that has a fix. The failure names the package and the CVE. Upgrade the package, or accept the finding on record with one entry in `.trivyignore.yaml`: an `id` and a `statement` that gives the reason. The scan needs the network, because Trivy downloads its vulnerability database on each run. The pre-commit run skips it, and CI runs it.
+
 4. **Read the report.** The agent opens the pull request and reports the commands it ran and what they printed. For tier 2 and up, the report includes what the verifier ran and found.
 
 5. **Decide each duplicate the pull request adds.** In a project made from the template, the Duplicate code check comments on the pull request with each duplicate Deslop finds in the added lines, and fails until each one has a decision. The agent fixes it, or keeps it with one line in `.deslop-decisions`, `<cluster id> keep <reason>`, and pushes. A cluster that a later edit changes gets a new id and needs a new decision.

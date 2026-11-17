@@ -58,13 +58,12 @@
 # Every {{ ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'][weekly_day] }} at {{ '%02d:%02d' | format(weekly_hour, weekly_minute) }} UTC, refresh the dependencies within their ranges and open a PR, as
 # the OneDev build spec does. Start it by hand with workflow_dispatch. The refresh
 # jobs run in the gate's images and write no secret but the read-only package
-# logins; the last job has the write token. It needs the repository settings
-# "Allow GitHub Actions to create and approve pull requests" and "Allow
-# auto-merge" on. One PR a project: the job replaces chore/deps-weekly and
-# updates its open PR. A PR opened with the job token does not start the gate, so
-# the last job starts it on the branch with workflow_dispatch (gate.yml needs
-# that trigger), then sets the PR to merge when the required checks pass, for a
-# PR that changes dependency files only.
+# logins; the last job pushes and opens the PR with the repo secret DEPS_PR_TOKEN (a
+# fine-grained token: Contents, Pull requests and Workflows read and write), so the
+# PR's own gate runs as for a person's PR. No other job sees it. It also needs the
+# repository setting "Allow auto-merge" on. One PR a project: the job replaces
+# chore/deps-weekly and updates its open PR, then sets the PR to merge when the
+# required checks pass, for a PR that changes dependency files only.
 name: update-deps
 
 on:
@@ -92,7 +91,7 @@ jobs:
 {%- for l in langs %}
 {{ refresh('refresh-' ~ l, 'Refresh ' ~ names[l], images[l], l, ' --only ' ~ l) }}
 {%- endfor %}
-{{ refresh('refresh-images', 'Refresh image pins', images['shell'], 'images', ' --only images --only deslop') }}
+{{ refresh('refresh-images', 'Refresh image pins', images['shell'], 'images', ' --only images --only deslop' ~ (' --only trivy' if ('python' in languages or 'dotnet' in languages or 'typescript' in languages) else '')) }}
 {%- endif %}
 
   open-pr:
@@ -103,15 +102,22 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
-      actions: write
     steps:
+      - run: '[[ -n "$DEPS_PR_TOKEN" ]] || { echo "::error::Set the repo secret DEPS_PR_TOKEN (a fine-grained token, see CLAUDE.md)"; exit 1; }'
+        env:
+          DEPS_PR_TOKEN: {% raw %}${{ secrets.DEPS_PR_TOKEN }}{% endraw %}
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          token: {% raw %}${{ secrets.DEPS_PR_TOKEN }}{% endraw %}
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           path: {% raw %}${{ runner.temp }}{% endraw %}/out
       - run: |
+          # The patches come from jobs that ran dependency code: run the scripts as
+          # checked out, never as patched, because they run with the token.
+          mkdir -p "$RUNNER_TEMP/trusted"
+          cp -r scripts "$RUNNER_TEMP/trusted/"
           while IFS= read -r -d '' p; do
             git apply --index "$p"
           done < <(find "$RUNNER_TEMP/out" -name '*.patch' -size +0 -print0)
@@ -120,6 +126,6 @@ jobs:
           done < <(find "$RUNNER_TEMP/out" -name update-deps-images.txt -print0)
           git config user.name "Dependency update"
           git config user.email "deps@${GITHUB_SERVER_URL#https://}"
-          scripts/update-deps.sh --publish-only
+          UPDATE_DEPS_ROOT="$PWD" "$RUNNER_TEMP/trusted/scripts/update-deps.sh" --publish-only
         env:
-          GH_TOKEN: {% raw %}${{ github.token }}{% endraw %}
+          GH_TOKEN: {% raw %}${{ secrets.DEPS_PR_TOKEN }}{% endraw %}

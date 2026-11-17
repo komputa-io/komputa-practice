@@ -1,0 +1,9 @@
+# Findings of scripts/skill-scan.sh that were read and accepted. A new finding is not covered and fails the scan.
+version: 2
+rules:
+  - id: "PE3"
+    path: "references/tooling.md"
+    reason: "False positive: text about npm and pnpm release-age settings; it does not ask the agent to raise its privileges."
+  - id: "AE1"
+    path: "SKILL.md"
+    reason: "False positive: table rows that link to references/boundary.md. The static parser could not resolve an expression and marks the target partial."

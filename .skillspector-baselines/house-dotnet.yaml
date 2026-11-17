@@ -1,0 +1,6 @@
+# Findings of scripts/skill-scan.sh that were read and accepted. A new finding is not covered and fails the scan.
+version: 2
+rules:
+  - id: "MP3"
+    path: "references/domain-types.md"
+    reason: "False positive: text on enum and state-machine modelling; 'store' means a database column, not agent memory."

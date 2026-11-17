@@ -14,9 +14,17 @@
 #       discard an open PR, with NOTE as the reason
 #   scripts/forge/onedev.sh ci-passed NUMBER
 #       print the PR's merge-preview commit when the CI job passed on it, or nothing
+#   scripts/forge/onedev.sh ci-start NUMBER PREVIEW
+#       start the CI job on PREVIEW, the PR's current merge preview, unless CI
+#       already ran or runs on it; exit 0 when it started it, 1 when not
 #   scripts/forge/onedev.sh merge-pr NUMBER BUILT MESSAGE
 #       merge the PR with a merge commit only while its merge preview is still
 #       BUILT, then delete its source branch (what odev pr merge --head does)
+#   scripts/forge/onedev.sh issue-marked MARKER
+#       print "NUMBER STATE" of the first issue (open or closed) whose text holds
+#       MARKER, or nothing. Needs jq
+#   scripts/forge/onedev.sh issue-create-high TITLE BODY
+#       open an issue with Priority=Major (without that field value, the issue is filed with none and a warning)
 # CI sets the three variables in .onedev-buildspec.yml.
 set -Eeuo pipefail
 shopt -s inherit_errexit
@@ -26,7 +34,7 @@ die() {
   exit 1
 }
 usage() {
-  printf 'usage: scripts/forge/onedev.sh check | open-update-prs | pr-create BRANCH TITLE DESCRIPTION | pr-edit NUMBER TITLE DESCRIPTION | pr-close NUMBER NOTE | ci-passed NUMBER | merge-pr NUMBER BUILT MESSAGE\n' >&2
+  printf 'usage: scripts/forge/onedev.sh check | open-update-prs | pr-create BRANCH TITLE DESCRIPTION | pr-edit NUMBER TITLE DESCRIPTION | pr-close NUMBER NOTE | ci-passed NUMBER | ci-start NUMBER PREVIEW | merge-pr NUMBER BUILT MESSAGE | issue-marked MARKER | issue-create-high TITLE BODY\n' >&2
   exit 2
 }
 
@@ -142,13 +150,32 @@ ci_passed() {
     END { if (ok) print built }'
 }
 
+# ci_start NUMBER PREVIEW: run again every job that ran on the PR (its merge needs
+# them all on the current preview), or CI when none ran.
+ci_start() {
+  local id built jobs job
+  check
+  id=$(pr_id "$1")
+  built=$(pr_field "$id" buildCommitHash)
+  [[ "$built" != "$2" ]] || return 1
+  jobs=$(api "pulls/$id/current-builds" | sed -n 's/^[[:space:]]*"jobName"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | sort -u)
+  while IFS= read -r job; do
+    # shellcheck disable=SC2310 # the caller's if must not hide a failed start.
+    printf '{"@type": "JobRunOnPullRequest", "pullRequestId": %s, "jobName": "%s", "params": {}, "reason": "the default branch moved"}' "$id" "$(json "$job")" \
+      | api job-runs -X POST -H 'Content-Type: application/json' --data-binary @- >/dev/null \
+      || die "could not start $job on #$1; the token needs the right to run jobs"
+  done <<<"${jobs:-CI}"
+}
+
 merge_pr() {
   local id project now
   check
   id=$(pr_id "$1")
   now=$(pr_field "$id" buildCommitHash)
   [[ "$now" == "$2" ]] || die "PR #$1 moved since CI passed; not merged"
-  printf '%s' "$3" | api "pulls/$id/merge" -X POST -H 'Content-Type: application/json' --data-binary @- >/dev/null
+  # shellcheck disable=SC2310 # the die names the cause; curl alone says 406.
+  printf '%s' "$3" | api "pulls/$id/merge" -X POST -H 'Content-Type: application/json' --data-binary @- >/dev/null \
+    || die "OneDev refused to merge #$1: a job or review it requires has not passed on the merge preview"
   project=$(api "projects/ids/$ODEV_PROJECT")
   api "repositories/$project/branches/chore%2Fdeps-weekly" -X DELETE >/dev/null
 }
@@ -168,6 +195,42 @@ pr_create() {
   [[ "$pull" =~ ^[1-9][0-9]*$ ]] || die "OneDev did not open the PR: $pull"
   number=$(api "pulls/$pull" | sed -n 's/.*"number"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p')
   printf '#%s\n' "${number:-?}"
+}
+
+# issue_marked MARKER: "NUMBER STATE" of the first issue that holds MARKER.
+issue_marked() {
+  local off=0 page n hit
+  check
+  while :; do
+    # shellcheck disable=SC2310 # the failure is handled here, on purpose
+    page=$(api issues -G --data-urlencode "query=\"Project\" is \"$ODEV_PROJECT\"" --data-urlencode "offset=$off" --data-urlencode count=100) \
+      || die "could not list the issues"
+    hit=$(jq -r --arg m "$1" '[.[] | select((.description // "") | contains($m))][0] // empty | "\(.id) \(.state | ascii_downcase | if . == "closed" then "closed" else "open" end)"' <<<"$page")
+    [[ -z "$hit" ]] || {
+      printf '%s\n' "$hit"
+      return 0
+    }
+    n=$(jq length <<<"$page")
+    ((n == 100)) || return 0
+    off=$((off + 100))
+  done
+}
+
+issue_create_high() {
+  local pid
+  check
+  pid=$(api "projects/ids/$ODEV_PROJECT")
+  [[ "$pid" =~ ^[1-9][0-9]*$ ]] || die "OneDev has no project $ODEV_PROJECT"
+  # A project without the Priority field (or its Major value) refuses it: file without it and say so.
+  # shellcheck disable=SC2310 # the failure is handled here, on purpose
+  new_issue "$1" "$2" '{"Priority": "Major"}' "$pid" 2>/dev/null || {
+    printf 'forge: WARNING the project has no Priority=Major (or refused it); filing without it\n' >&2
+    new_issue "$1" "$2" '{}' "$pid"
+  }
+}
+new_issue() { # title, description, fields as JSON, project id
+  jq -n --argjson p "$4" --arg t "$1" --arg d "$2" --argjson f "$3" '{title: $t, projectId: $p, description: $d, fields: $f}' \
+    | api issues -X POST -H 'Content-Type: application/json' --data-binary @- >/dev/null
 }
 
 case "${1-}" in
@@ -191,6 +254,10 @@ case "${1-}" in
     (($# == 2)) || usage
     ci_passed "$2"
     ;;
+  ci-start)
+    (($# == 3)) || usage
+    ci_start "$2" "$3"
+    ;;
   merge-pr)
     (($# == 4)) || usage
     merge_pr "$2" "$3" "$4"
@@ -198,6 +265,14 @@ case "${1-}" in
   pr-create)
     (($# == 4)) || usage
     pr_create "$2" "$3" "$4"
+    ;;
+  issue-marked)
+    (($# == 2)) || usage
+    issue_marked "$2"
+    ;;
+  issue-create-high)
+    (($# == 3)) || usage
+    issue_create_high "$2" "$3"
     ;;
   *) usage ;;
 esac

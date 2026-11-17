@@ -352,6 +352,54 @@ jobs:
   maxRetries: 0
   timeout: 1800
 
+# Nightly at {{ '%02d:%02d' | format(nightly_hour, nightly_minute) }} (the same slot as Deslop nightly): scan the whole history of the default branch
+# with TruffleHog for secrets that still work, and file one high-priority issue
+# (Priority=Major) for each. A sibling job, so a failure of one scan does not hide
+# the other. TruffleHog tests each candidate secret with the credential's own
+# provider, so the job needs outbound internet, and it sends the candidate to that
+# provider. The issue and the log never hold the secret value. The image is
+# pinned by digest; the weekly "Update dependencies" job moves it, as it moves
+# every image pin. Uses the same job secret as Deslop nightly: ONEDEV_ISSUES_TOKEN.
+- name: Secret scan nightly
+  steps:
+  - !CheckoutStep
+    name: Checkout
+    cloneCredential: !DefaultCredential {}
+    withLfs: false
+    withSubmodules: false
+    condition: ALL_PREVIOUS_STEPS_WERE_SUCCESSFUL
+  - !CommandStep
+    name: Scan the history
+    runInContainer: true
+    image: ghcr.io/trufflesecurity/trufflehog:3.99.8@@sha256:674b2f187620a19df77f44cf9a7d77efcc581a5662accef2f2739cbb46ba4a3a
+    interpreter: !DefaultInterpreter
+      commands: |
+        set -e
+        scripts/trufflehog-scan.sh
+    useTTY: false
+    condition: ALL_PREVIOUS_STEPS_WERE_SUCCESSFUL
+  - !CommandStep
+    name: File issues
+    runInContainer: true
+    image: {{ images['deslop'] }}
+    interpreter: !DefaultInterpreter
+      commands: |
+        set -e
+        apt-get update -qq && apt-get install -y -qq --no-install-recommends curl jq >/dev/null
+        export ODEV_HOST='@server_url@' ODEV_PROJECT='@project_path@'
+        scripts/trufflehog-issues.sh --forge onedev --findings .trufflehog/findings.jsonl --post
+    envVars:
+    - name: ODEV_TOKEN
+      value: '@secret:ONEDEV_ISSUES_TOKEN@'
+    useTTY: false
+    condition: ALL_PREVIOUS_STEPS_WERE_SUCCESSFUL
+  triggers:
+  - !ScheduleTrigger
+    cronExpression: 0 {{ nightly_minute }} {{ nightly_hour }} * * ?
+  retryCondition: never
+  maxRetries: 0
+  timeout: 1800
+
 # Weekly, on {{ ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'][weekly_day] }} at {{ '%02d:%02d' | format(weekly_hour, weekly_minute) }}: refresh dependencies within their ranges and open a PR. Needs two
 # job secrets on main, from an account that can push a branch and open a pull
 # request: ONEDEV_USER (its login) and ONEDEV_TOKEN (its access token). OneDev
@@ -426,7 +474,7 @@ jobs:
         # image has it or docker, and Debian packages it. A failed install only
         # skips the image section, which says so.
         apt-get update -qq && apt-get install -y -qq --no-install-recommends skopeo >/dev/null || true
-        scripts/update-deps.sh --refresh-only --only images --only deslop
+        scripts/update-deps.sh --refresh-only --only images --only deslop{% if 'python' in languages or 'dotnet' in languages or 'typescript' in languages %} --only trivy{% endif %}
     useTTY: false
     condition: ALL_PREVIOUS_STEPS_WERE_SUCCESSFUL
   - !CommandStep
@@ -457,7 +505,9 @@ jobs:
 # the preview is built on the branch tip now, and only dependency files changed.
 # It runs on {{ default_branch }}, where the job secrets are readable, and uses the secrets
 # that "Update dependencies" already names. The merge is a merge commit, and the
-# forge checks the merge preview again as it merges.
+# forge checks the merge preview again as it merges. When only {{ default_branch }} moved
+# after CI passed, OneDev runs no CI on the new preview: this job starts CI on it
+# and a later run merges. The token needs the right to run jobs.
 - name: Merge dependency update
   steps:
   - !CheckoutStep

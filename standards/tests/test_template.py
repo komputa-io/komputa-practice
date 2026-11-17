@@ -92,6 +92,8 @@ COMMON_FILES = [
     "scripts/deslop-decisions.sh",
     "scripts/deslop-issues.sh",
     "scripts/deslop.pin",
+    "scripts/trufflehog-scan.sh",
+    "scripts/trufflehog-issues.sh",
     ".deslop.toml",
     ".secrets.baseline",
 ]
@@ -108,6 +110,7 @@ FORGE_FILES = {
         ".github/ISSUE_TEMPLATE/issue.md",
         ".github/workflows/gate.yml",
         ".github/workflows/deslop-nightly.yml",
+        ".github/workflows/trufflehog-nightly.yml",
         ".github/workflows/update-deps.yml",
         "scripts/forge/github.sh",
     ],
@@ -176,8 +179,11 @@ def test_rendered_scripts_pass_shellcheck_and_shfmt(tmp_path, name):
         out / "scripts/deslop-comment.sh",
         out / "scripts/deslop-decisions.sh",
         out / "scripts/deslop-issues.sh",
+        out / "scripts/trufflehog-scan.sh",
+        out / "scripts/trufflehog-issues.sh",
         out / ".githooks/pre-commit",
         *out.glob("scripts/install-cargo-deny.sh"),
+        *out.glob("scripts/install-trivy.sh"),
         *out.glob("scripts/forge/*.sh"),
     ]
     subprocess.run(
@@ -1322,7 +1328,7 @@ url=
 prev=
 for a in "$@"; do
   if [[ "$prev" == -H && "$a" == @* ]]; then cat "${a#@}" >>"$log/headers"; fi
-  if [[ "$prev" == --data-binary && "$a" == @- ]]; then cat >"$log/body"; cp "$log/body" "$log/body.$(basename "${*: -1}")"; fi
+  if [[ "$prev" == --data-binary && "$a" == @- ]]; then cat >"$log/body"; cat "$log/body" >>"$log/body.$(basename "${*: -1}")"; fi
   [[ "$a" == http* ]] && url=$a
   [[ "$a" == -G ]] && listing=1
   prev=$a
@@ -1338,7 +1344,8 @@ case "$url" in
       : >"$log/listed"
     else printf '1987'; fi ;;
   */~api/pulls/1007) printf '{\n  "id" : 1007,\n  "buildCommitHash" : "%s"\n}\n' "${STUB_BUILT-}" ;;
-  */~api/pulls/1007/current-builds) printf '[ {\n"jobName" : "CI",\n"commitHash" : "%s",\n"status" : "%s",\n"stepExecutions" : {\n"status" : "FAILED"\n}\n} ]\n' "${STUB_BUILT-}" "${STUB_CI-SUCCESSFUL}" ;;
+  */~api/pulls/1007/current-builds) printf '[ {\n"jobName" : "CI",\n"commitHash" : "%s",\n"status" : "%s",\n"stepExecutions" : {\n"status" : "FAILED"\n}\n}, {\n"jobName" : "Duplicate code",\n"commitHash" : "%s",\n"status" : "SUCCESSFUL"\n} ]\n' "${STUB_BUILT-}" "${STUB_CI-SUCCESSFUL}" "${STUB_BUILT-}" ;;
+  */~api/job-runs) printf '8597' ;;
   */~api/pulls/*/title | */~api/pulls/*/description | */~api/pulls/*/discard | */~api/pulls/*/merge) ;;
   */~api/repositories/42/branches/*) ;;
   # OneDev pretty-prints, one field per line, a space before each colon.
@@ -1354,7 +1361,6 @@ printf '%s\0' "$@" >>"$STUB_LOG/gh"
 [[ "$1 $2" == "pr create" ]] && printf 'https://github.test/team/demo/pull/7\n'
 [[ "$1 $2" == "repo view" ]] && printf 'main\n'
 [[ "$1" == api ]] && printf '%s\n' "${STUB_REQUIRED-2}"
-[[ "$1 $2" == "workflow list" ]] && printf 'gate\n'
 if [[ "$1 $2" == "pr list" ]]; then
   [[ -z "${STUB_LIST_FAIL-}" ]] || exit 1
   printf '%s' "${STUB_OPEN-}"
@@ -1646,13 +1652,7 @@ def test_the_github_refresh_sets_the_merge_on_the_head_the_gate_ran_on(tmp_path)
     done = refresh(out, env)
     assert done.returncode == 0, done.stdout + done.stderr
     calls = (log / "gh").read_text().split("\0")
-    assert calls[calls.index("run") - 1 :][:5] == [
-        "workflow",
-        "run",
-        "gate.yml",
-        "--ref",
-        "chore/deps-weekly",
-    ]
+    assert "workflow" not in calls
     merge = calls[calls.index("merge") - 1 :][:7]
     assert merge == [
         "pr",
@@ -1675,8 +1675,8 @@ def test_no_merge_is_set_when_github_requires_no_checks(tmp_path):
     assert not _merge_set(log)
 
 
-def _ready_to_merge(tmp_path: Path, moved: bool):
-    """A published dependency PR, CI green on its merge preview; the branch moves after when asked."""
+def _ready_to_merge(tmp_path: Path, moved: bool, main_moved: bool = False):
+    """A published dependency PR, CI green on its merge preview; the branch, or main, moves after when asked."""
     out, log, env = _refreshable(tmp_path)
     git(out, "reset", "-q", "--hard")
     (out / "uv.lock").write_text("x\n")
@@ -1691,16 +1691,16 @@ def _ready_to_merge(tmp_path: Path, moved: bool):
         git(out, "commit", "-qam", "late", "--no-verify")
         git(out, "push", "-q", "--no-verify", "origin", "chore/deps-weekly")
         git(out, "switch", "-q", "main")
-    env |= {"STUB_OPEN": OPEN_CREATED, "STUB_BUILT": preview}
+    env |= {"STUB_OPEN": OPEN_CREATED, "STUB_BUILT": tip if main_moved else preview}
     (log / "args").unlink()
     return out, log, env
 
 
-@pytest.mark.parametrize("moved", [False, True])
-def test_onedev_merges_a_green_dependency_pr_only_while_its_head_is_the_one_ci_passed(
-    tmp_path, moved
+@pytest.mark.parametrize("moved,main_moved", [(False, False), (True, False), (False, True)])
+def test_onedev_merges_a_green_dependency_pr_only_while_ci_passed_on_its_current_preview(
+    tmp_path, moved, main_moved
 ):
-    out, log, env = _ready_to_merge(tmp_path, moved)
+    out, log, env = _ready_to_merge(tmp_path, moved, main_moved)
     done = subprocess.run(
         [str(out / "scripts/update-deps.sh"), "--merge-ready"],
         cwd=out,
@@ -1710,8 +1710,15 @@ def test_onedev_merges_a_green_dependency_pr_only_while_its_head_is_the_one_ci_p
     )
     assert done.returncode == 0, done.stdout + done.stderr
     urls = (log / "args").read_text()
-    assert ("pulls/1007/merge" in urls and "-X DELETE" in urls) is not moved
-    assert moved is ("moved after CI" in done.stdout)
+    assert ("pulls/1007/merge" in urls and "-X DELETE" in urls) is not (moved or main_moved)
+    assert moved is ("branch moved after CI" in done.stdout)
+    assert main_moved is ("default branch moved" in done.stdout)
+    assert main_moved is (
+        "JobRunOnPullRequest" in (log / "body.job-runs").read_text() if main_moved else False
+    )
+    if main_moved:  # its merge needs every job that ran on the PR, not only CI
+        started = (log / "body.job-runs").read_text()
+        assert '"jobName": "CI"' in started and '"jobName": "Duplicate code"' in started
 
 
 def test_the_github_refresh_runs_one_at_a_time_and_never_cancels_a_running_one(tmp_path):
@@ -1730,11 +1737,8 @@ def test_the_github_refresh_runs_weekly_in_the_gate_images_and_only_the_last_job
     assert wf[True]["schedule"] == [{"cron": "0 4 * * 1"}] and "workflow_dispatch" in wf[True]
     assert wf["permissions"] == {"contents": "read"}
     jobs = wf["jobs"]
-    assert jobs["open-pr"]["permissions"] == {
-        "contents": "write",
-        "pull-requests": "write",
-        "actions": "write",
-    }
+    assert jobs["open-pr"]["permissions"] == {"contents": "write", "pull-requests": "write"}
+    assert [n for n, j in jobs.items() if "DEPS_PR_TOKEN" in yaml.safe_dump(j)] == ["open-pr"]
     assert (
         "workflow_dispatch"
         in yaml.safe_load((out / ".github/workflows/gate.yml").read_text())[True]
@@ -1743,7 +1747,9 @@ def test_the_github_refresh_runs_weekly_in_the_gate_images_and_only_the_last_job
     assert images <= {j["container"] for j in gate.values() if "container" in j}
     assert set(jobs["open-pr"]["needs"]) == set(jobs) - {"open-pr"}
     last = " ".join(s.get("run", "") for s in jobs["open-pr"]["steps"])
-    assert "update-deps.sh --publish-only" in last
+    assert 'update-deps.sh" --publish-only' in last
+    assert last.index("cp -r scripts") < last.index("git apply")  # the token runs trusted code
+    assert "\nscripts/update-deps.sh --publish-only" not in last
     refresh = " ".join(s.get("run", "") for s in jobs[next(iter(jobs))]["steps"])
     assert "git add -A" in refresh and "diff --cached" in refresh  # a new lockfile travels
 
@@ -2878,3 +2884,161 @@ def test_the_github_open_pr_step_stages_the_patch_of_either_artifact_layout(tmp_
     )
     assert done.returncode == 0, done.stderr
     assert done.stdout.startswith("M  "), done.stdout
+
+
+# (t) The nightly secret scan files an issue for each live secret, and no value reaches it or the log.
+
+SECRET = "fakeSecretValueXYZ987"
+FINDING = {"DetectorName": "Acme", "Verified": True, "Raw": "fake-token-1234abcd",
+    "RawV2": f"fake-token-1234abcd:{SECRET}", "Redacted": "fake-token-1234abcd", "ExtraData": {"n": SECRET},
+    "SourceMetadata": {"Data": {"Git": {"commit": "0123abcd", "file": "config/prod.env", "line": 7}}}}  # fmt: skip
+STUB_FORGE = """#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*|*"projects/ids"*) [[ "$*" == *projects/ids* ]] && echo 5; exit 0 ;;
+  *--paginate*) echo "$LISTED"; exit 0 ;;
+  *"-G"*) echo "$ONEDEV_LIST"; exit 0 ;;
+esac
+echo "$0 $*" >>"$STUB_LOG"; cat >>"$STUB_LOG"; echo >>"$STUB_LOG"
+"""
+
+
+@pytest.mark.parametrize("forge", ["github", "onedev"])
+def test_the_secret_scan_files_one_issue_per_live_secret_and_never_writes_the_value(
+    tmp_path, forge
+):
+    out = render(tmp_path / "p", ["shell"], forge=forge)
+    stub = tmp_path / "stub"
+    stub.mkdir()
+    for tool in ("gh", "curl"):
+        (stub / tool).write_text(STUB_FORGE)
+        (stub / tool).chmod(0o755)
+    findings = tmp_path / "f.jsonl"
+    findings.write_text(
+        json.dumps(FINDING) + "\n" + json.dumps({**FINDING, "Verified": False}) + "\n"
+    )
+    log = tmp_path / "log"
+    env = {**os.environ, "PATH": f"{stub}:{os.environ['PATH']}", "STUB_LOG": str(log), "LISTED": "",
+        "ONEDEV_LIST": "[]", "GH_TOKEN": "t", "ODEV_HOST": "http://h", "ODEV_PROJECT": "p", "ODEV_TOKEN": "t"}  # fmt: skip
+
+    def run(*args, **over):
+        return subprocess.run([str(out / "scripts/trufflehog-issues.sh"), "--findings", str(findings), *args],
+            capture_output=True, text=True, env={**env, **over})  # fmt: skip
+
+    dry = run()
+    assert "findings: 1" in dry.stdout and not log.exists()
+    first = run("--forge", forge, "--post")
+    issue = log.read_text()
+    fp = re.search(r"trufflehog: ([0-9a-f]{16})", issue)[1]
+    log.unlink()
+    listed = {"LISTED": "7 open", "ONEDEV_LIST": json.dumps([{"id": 7, "state": "Open", "description": f"<!-- trufflehog: {fp} -->"}])}  # fmt: skip
+    second = run("--forge", forge, "--post", **listed)
+    assert (
+        "filed 1, already known 0" in first.stdout and "filed 0, already known 1" in second.stdout
+    )
+    assert not log.exists()
+    assert ("priority: high" if forge == "github" else '"Priority": "Major"') in issue
+    for text in (
+        dry.stdout + dry.stderr,
+        issue,
+        first.stdout + first.stderr,
+        second.stdout + second.stderr,
+    ):
+        assert SECRET not in text and "fake-token" not in text
+
+
+# The dependency scan: Trivy over the lock files, in the full gate only.
+
+
+def _trivy_stub(tmp_path: Path, verdict: int) -> dict[str, str]:
+    """A trivy of the pinned version that records its arguments and exits with verdict."""
+    stub = tmp_path / "stub"
+    stub.mkdir()
+    pinned = "0.76.2"
+    (stub / "trivy").write_text(
+        f'#!/usr/bin/env bash\n[[ "$1" == --version ]] && {{ echo "Version: {pinned}"; exit 0; }}\n'
+        f'echo "$*" >"$STUB_LOG"; find "${{@: -1}}" -type f >>"$STUB_LOG"; exit {verdict}\n'
+    )
+    (stub / "trivy").chmod(0o755)
+    return {"PATH": f"{stub}:{os.environ['PATH']}", "STUB_LOG": str(tmp_path / "trivy.log")}
+
+
+def _scan_repo(tmp_path: Path, verdict: int) -> tuple[Path, dict[str, str]]:
+    out = render(tmp_path / "p", ["python", "rust"])
+    _repo(out)
+    (out / "Cargo.lock").write_text("# not scanned\n")
+    git(out, "add", "-A")
+    return out, {**os.environ, **_trivy_stub(tmp_path, verdict)}
+
+
+def _gate_with(out: Path, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [str(out / "scripts/gate.sh"), "--full", "--only", "shell"],
+        cwd=out,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+
+def test_the_full_gate_scans_the_lock_files_and_fails_on_a_finding(tmp_path):
+    out, env = _scan_repo(tmp_path, 0)
+    gate = _gate_with(out, env)
+    assert gate.returncode == 0, gate.stdout + gate.stderr
+    log = (tmp_path / "trivy.log").read_text()
+    assert "--severity HIGH,CRITICAL --ignore-unfixed --exit-code 1" in log
+    assert "uv.lock" in log and "Cargo.lock" not in log
+    (tmp_path / "bad").mkdir()
+    gate = _gate_with(out, {**env, **_trivy_stub(tmp_path / "bad", 1)})
+    assert gate.returncode != 0 and "dependency scan failed" in gate.stderr
+
+
+def test_the_fast_gate_does_not_run_the_scan(tmp_path):
+    out, env = _scan_repo(tmp_path, 1)
+    gate = subprocess.run(
+        [str(out / "scripts/gate.sh"), "--fast", "--only", "shell"],
+        cwd=out,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    assert gate.returncode == 0 and not (tmp_path / "trivy.log").exists(), gate.stderr
+
+
+@pytest.mark.parametrize(
+    "entry, ok",
+    [
+        ("- id: CVE-2026-1\n    statement: not reachable, we never call it\n", True),
+        ("- id: CVE-2026-1\n", False),
+        ("- id: CVE-2026-1\n    statement:\n", False),
+    ],
+)
+def test_an_accepted_finding_needs_a_reason(tmp_path, entry, ok):
+    out, env = _scan_repo(tmp_path, 0)
+    (out / ".trivyignore.yaml").write_text("vulnerabilities:\n  " + entry)
+    gate = _gate_with(out, env)
+    assert (gate.returncode == 0) is ok, gate.stdout + gate.stderr
+    assert ok or "statement" in gate.stderr
+
+
+def test_a_repo_without_a_lock_language_gets_no_scan(tmp_path):
+    out = render(tmp_path / "p", ["rust"])
+    assert (
+        not (out / "scripts/install-trivy.sh").exists()
+        and "trivy" not in (out / "scripts/gate.sh").read_text()
+    )
+    assert "update-deps: trivy" not in (out / "scripts/update-deps.sh").read_text()
+
+
+def test_the_pinned_trivy_is_not_a_compromised_release(tmp_path):
+    out = render(tmp_path / "p", ["python"])
+    pin = dict(
+        line.split("=", 1)
+        for line in (out / "scripts/trivy.pin").read_text().splitlines()
+        if "=" in line and line[0] != "#"
+    )
+    assert re.fullmatch(r"[0-9a-f]{64}", pin["sha256"])
+    assert pin["version"] not in {"0.69.4", "0.69.5", "0.69.6"}
+    refresh = subprocess.run(
+        ["bash", str(out / "scripts/update-deps.sh"), "--help"], capture_output=True, text=True
+    )
+    assert "trivy" in refresh.stderr

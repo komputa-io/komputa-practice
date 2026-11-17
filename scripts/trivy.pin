@@ -1,0 +1,1 @@
+../template/scripts/{% if "python" in languages or "dotnet" in languages or "typescript" in languages %}trivy.pin{% endif %}

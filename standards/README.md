@@ -132,6 +132,18 @@ risk" in `komputa-practice` (`rules/working-rules.md`). A test file is one
 named like a test, one under a `tests`, `test`, `__tests__` or `*.Tests` folder,
 or one under a folder in the `test_folders` answer.
 
+The full gate scans the lock files of a Python, .NET or TypeScript project with
+Trivy (`trivy fs`, vulnerabilities only), in the shell section, so CI runs it in
+the shell job. It fails on HIGH and CRITICAL findings that have a fix.
+`.trivyignore.yaml` accepts a finding on record: each entry needs a `statement`,
+which the gate checks. `scripts/install-trivy.sh` installs the release in
+`scripts/trivy.pin` by its sha256 (never v0.69.4 to v0.69.6, the compromised
+releases), and the weekly job moves the pin to a release at least seven days old
+after a cosign (sigstore) check of its checksums file. A repo whose
+`.onedev-buildspec.yml` or `update-deps.yml` is already seeded adds `--only trivy` to
+the "Refresh image pins" step by hand. `--fast` skips the scan: the binary and the
+vulnerability database take longer than its 5 s budget. Rust keeps `cargo deny`.
+
 Rust is a language answer beside Python, .NET and TypeScript. Its section runs
 `cargo fmt --check`, `cargo clippy -D warnings`, `cargo deny check` and
 `cargo test`, all with `--locked`, in `rust_dir`. The fast gate runs rustfmt on

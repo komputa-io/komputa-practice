@@ -29,6 +29,7 @@ _skip_if_exists:
   - rust-toolchain.toml
   - .deslop.toml
   - scripts/deslop.pin
+  - scripts/trivy.pin
 _tasks:
   # A new project gets a git repo; an existing one keeps its own.
   - command: git rev-parse --git-dir >/dev/null 2>&1 || git init -q -b {{ default_branch }}
