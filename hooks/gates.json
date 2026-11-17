@@ -7,6 +7,7 @@
     { "matcher": "Bash", "hooks": [{ "type": "command", "command": "~/.claude/hooks/block-foreground-wait.sh", "onFailure": "block" }] },
     { "matcher": "Bash|Edit|MultiEdit|Write", "hooks": [{ "type": "command", "command": "~/.claude/hooks/block-test-weakening.sh", "onFailure": "block" }] },
     { "matcher": "Bash", "hooks": [{ "type": "command", "command": "~/.claude/hooks/block-destructive-delete.sh", "onFailure": "block" }] },
-    { "matcher": "Bash", "hooks": [{ "type": "command", "command": "~/.claude/hooks/block-branch-name.sh", "onFailure": "block" }] }
+    { "matcher": "Bash", "hooks": [{ "type": "command", "command": "~/.claude/hooks/block-branch-name.sh", "onFailure": "block" }] },
+    { "matcher": "Bash", "hooks": [{ "type": "command", "command": "~/.claude/hooks/block-issue-estimate.sh", "onFailure": "block" }] }
   ]
 }

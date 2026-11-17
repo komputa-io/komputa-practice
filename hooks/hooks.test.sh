@@ -93,6 +93,11 @@ check 0 block-credential-read.sh "$(bash_cmd 'secret-tool github token')"
 check 0 block-credential-read.sh "$(bash_cmd 'cat .env.example')"
 check 0 block-credential-read.sh "$(bash_cmd 'cp .env.example .env')"
 check 0 block-credential-read.sh "$(bash_cmd 'echo A=1 > .env')"
+# OneDev's project setting document holds every job secret in clear.
+check 2 block-credential-read.sh "$(bash_cmd 'curl -fsS -H @h "<forge-url>/~api/projects/58/setting"')"
+check 2 block-credential-read.sh "$(bash_cmd 'odev api GET projects/12/setting | jq .')"
+check 0 block-credential-read.sh "$(bash_cmd 'odev api GET projects/58/settings-page-of-docs')"
+check 0 block-credential-read.sh "$(bash_cmd 'grep -n "projects/{id}/setting" docs/api.md')"
 check 0 block-credential-read.sh "$(bash_cmd 'cat > .env <<EOF')"
 check 0 block-credential-read.sh "$(bash_cmd 'touch .env && ls -la')"
 # Forms that print no value: counts, match tests, key names.

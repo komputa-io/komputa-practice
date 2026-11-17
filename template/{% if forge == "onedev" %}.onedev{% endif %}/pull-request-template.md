@@ -41,3 +41,7 @@ call tree for the logic, a shallow file tree of changed responsibilities. -->
 ## Verification
 
 <!-- One to three bullets, each a real run and its result. -->
+
+## Grew
+
+<!-- Optional. If the closed issue ended larger than its estimate, one line: `Grew: <reason>`, with the reason one of: hidden dependency, wrong assumption, scope added, infrastructure or flakes, unclear spec. Delete if it did not grow. -->

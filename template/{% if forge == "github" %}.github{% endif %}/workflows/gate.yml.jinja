@@ -47,6 +47,9 @@ on:
     branches: [{{ default_branch }}]
   push:
     branches: [{{ default_branch }}]
+  # The weekly dependency job starts the gate on its branch: a PR it opens with
+  # the job token starts no workflow of its own.
+  workflow_dispatch:
 
 permissions:
   contents: read

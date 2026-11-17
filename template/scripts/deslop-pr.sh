@@ -4,6 +4,7 @@
 #   scripts/deslop-pr.sh --full [--embeddings URL] [--out DIR]
 # Installs the release named in scripts/deslop.pin after checking its SHA-256,
 # diffs BASE_REF's merge base against HEAD, and scans only what the diff adds.
+# The diff is made valid UTF-8 first (invalid bytes dropped), as Deslop rejects any other.
 # Reports go to DIR (default .deslop-pr): deslop-report.json and .txt.
 # Warn only: findings never fail the run. --fail-over PERCENT fails it (exit 3)
 # when the added lines are more duplicated than that. A failed download, a
@@ -63,7 +64,11 @@ if [[ "$base_ref" == --full ]]; then
 else
   merge_base=$(git merge-base "$base_ref" HEAD) || die "no merge base between $base_ref and HEAD (is the history fetched?)"
   # Deslop reads a/ and b/ prefixes; a workstation's diff.mnemonicPrefix would change them.
-  git -c diff.noprefix=false -c diff.mnemonicPrefix=false diff --no-ext-diff --src-prefix=a/ --dst-prefix=b/ "$merge_base" HEAD >"$out/pr.diff"
+  git -c diff.noprefix=false -c diff.mnemonicPrefix=false diff --no-ext-diff --src-prefix=a/ --dst-prefix=b/ "$merge_base" HEAD >"$out/pr.raw.diff"
+  # Deslop refuses a diff that is not UTF-8, and a text fixture with Latin-1 bytes makes one.
+  # Duplicate detection does not need those bytes. iconv -c drops them and exits 1 when it does.
+  iconv -f utf-8 -t utf-8 -c <"$out/pr.raw.diff" >"$out/pr.diff" || [[ -s "$out/pr.diff" || ! -s "$out/pr.raw.diff" ]] || die "could not make the diff valid UTF-8"
+  rm -f "$out/pr.raw.diff"
 fi
 
 gate=(--no-fail-over)

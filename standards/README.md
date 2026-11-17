@@ -28,6 +28,19 @@ A repo whose weekly "Update dependencies" job still has a "Build odev" step must
 delete that step by hand and drop `PATH="$PWD/.git/bin:$PATH"` from its export
 line. `scripts/update-deps.sh` opens the PR through `scripts/forge/<forge>.sh`.
 
+The weekly job keeps one PR on the branch `chore/deps-weekly`, replacing its content
+each run, and closes an open PR from an old `chore/update-deps-*` branch. When the PR
+changes dependency files only (lock files, manifests, `scripts/deslop.pin`, image
+digests), it merges itself when CI passes on its head. OneDev: the "Merge dependency update"
+job (daily, three hours after the weekly refresh, on the default branch, with the existing `ONEDEV_USER` and
+`ONEDEV_TOKEN`) merges it with a merge commit only while the merge preview that CI
+passed is built on the branch tip, then deletes the branch. GitHub: `gh pr merge --auto`
+after the job starts the gate on the branch with
+`workflow_dispatch` (a PR opened with the job token starts no workflow; `gate.yml`
+is seeded once, so an older repo adds that trigger by hand, and the repo needs
+"Allow auto-merge" on). `.onedev-buildspec.yml` is seeded once, so an older OneDev repo adds the
+"Merge dependency update" job by hand. Any other change waits for a person.
+
 The `forge` answer (`onedev` or `github`, from the environment file) picks the
 CI file (`.onedev-buildspec.yml` or `.github/workflows/gate.yml`), the PR
 template and the forge script. The weekly dependency refresh job is OneDev's

@@ -63,6 +63,12 @@ block() {
   exit 2
 }
 
+ONEDEV_SETTING='projects/[^/[:space:]"'"'"']+/setting([^A-Za-z0-9_]|$)'
+if [[ "$TOOL" == "Bash" ]] && echo "$TARGET" | grep -qE '(^|[^A-Za-z0-9_])(curl|wget|odev)\s' && echo "$TARGET" | grep -qE "$ONEDEV_SETTING"; then
+  echo "BLOCKED: OneDev's projects/<id>/setting document holds every job secret in clear, so a call to it prints them. Use a narrower endpoint (odev branch, odev secret list prints names only), or ask the operator to run it in their own pane." >&2
+  exit 2
+fi
+
 if [[ "$TOOL" != "Bash" ]]; then
   hit=$(names_credential "$TARGET") && block "$hit"
   exit 0

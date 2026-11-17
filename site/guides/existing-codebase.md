@@ -60,7 +60,7 @@ Use this guide to start using the practice in a repo that you already have. The 
    |---|---|---|
    | `ONEDEV_COMMENT_TOKEN` | Duplicate code | Always. Set it with `--branches '**'`, because a pull request's build reads it. Use the token of an account that may only comment on pull requests. A missing secret fails this job, not CI |
    | `ONEDEV_ISSUES_TOKEN` | Deslop nightly | Always. The token of an account that may write issues |
-   | `ONEDEV_USER` and `ONEDEV_TOKEN` | Update dependencies | Always. The login and the token of an account that can push a branch and open a pull request |
+   | `ONEDEV_USER` and `ONEDEV_TOKEN` | Update dependencies | Always. The login and the token of an account that can push a branch and open a pull request. The "Merge dependency update" job uses the same two secrets |
    | `ONEDEV_TOKEN` | CI on main | Only with the `trust_green_ci` answer. A token that can read this project's builds, authorized on the default branch only |
    | `PKG_USER` and `PKG_TOKEN` | CI, CI on main, Update dependencies | Only with a private package index. A read-only account |
    | `NUGET_USER` and `NUGET_TOKEN` | CI, CI on main, Update dependencies | Only with a private NuGet feed. A read-only account |

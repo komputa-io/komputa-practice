@@ -3,10 +3,20 @@
 # project template; scripts/update-deps.sh calls it.
 #   scripts/forge/github.sh check
 #       fail unless gh is on PATH and signed in (GH_TOKEN in CI)
-#   scripts/forge/github.sh open-update-pr
-#       print the number of an open PR from a chore/update-deps- branch, or nothing
+#   scripts/forge/github.sh open-update-prs
+#       print "NUMBER BRANCH" for each open PR from chore/deps-weekly or an old
+#       chore/update-deps- branch
 #   scripts/forge/github.sh pr-create BRANCH TITLE DESCRIPTION
 #       open a PR from BRANCH into the default branch; print its URL
+#   scripts/forge/github.sh pr-edit NUMBER TITLE DESCRIPTION
+#       replace an open PR's title and description
+#   scripts/forge/github.sh pr-close NUMBER NOTE
+#       close an open PR, with NOTE as its last comment
+#   scripts/forge/github.sh auto-merge NUMBER SHA
+#       merge the PR when its required checks pass, and only at head SHA. A PR
+#       opened with GITHUB_TOKEN starts no workflow, so this starts the gate on
+#       the branch with workflow_dispatch (which GITHUB_TOKEN may do). Fails,
+#       and sets nothing, unless the default branch requires status checks
 set -Eeuo pipefail
 shopt -s inherit_errexit
 trap 'printf "%s: line %d: %s exited %d\n" "${0##*/}" "$LINENO" "$BASH_COMMAND" "$?" >&2' ERR
@@ -15,7 +25,7 @@ die() {
   exit 1
 }
 usage() {
-  printf 'usage: scripts/forge/github.sh check | open-update-pr | pr-create BRANCH TITLE DESCRIPTION\n' >&2
+  printf 'usage: scripts/forge/github.sh check | open-update-prs | pr-create BRANCH TITLE DESCRIPTION | pr-edit NUMBER TITLE DESCRIPTION | pr-close NUMBER NOTE | auto-merge NUMBER SHA\n' >&2
   exit 2
 }
 
@@ -24,10 +34,10 @@ check() {
   gh auth status >/dev/null 2>&1 || die "sign gh in (or set GH_TOKEN) to open the PR"
 }
 
-open_update_pr() {
+open_update_prs() {
   check
   gh pr list --state open --limit 100 --json number,headRefName \
-    --jq '[.[] | select(.headRefName | startswith("chore/update-deps-"))][0].number // empty' \
+    --jq '.[] | select(.headRefName == "chore/deps-weekly" or (.headRefName | startswith("chore/update-deps-"))) | "\(.number) \(.headRefName)"' \
     || die "could not list the open PRs, so cannot tell whether an update PR is waiting"
 }
 
@@ -36,14 +46,51 @@ pr_create() {
   gh pr create --head "$1" --title "$2" --body "$3"
 }
 
+pr_edit() {
+  check
+  gh pr edit "$1" --title "$2" --body "$3" >/dev/null
+}
+
+pr_close() {
+  check
+  gh pr close "$1" --comment "$2" >/dev/null
+}
+
+auto_merge() {
+  local base required gate
+  check
+  base=$(gh repo view --json defaultBranchRef --jq .defaultBranchRef.name)
+  required=$(gh api "repos/{owner}/{repo}/branches/$base" --jq '.protection.required_status_checks.contexts | length')
+  [[ "$required" =~ ^[1-9][0-9]*$ ]] || die "$base requires no status checks, so auto-merge is not set"
+  # The gate's check runs land on the head commit and count for branch protection.
+  # A gate.yml without workflow_dispatch (seeded before this) cannot be started.
+  gate=$(gh workflow list --json path,name --jq '.[] | select(.path == ".github/workflows/gate.yml") | .name')
+  [[ -n "$gate" ]] || die "no gate workflow, so auto-merge is not set"
+  gh workflow run gate.yml --ref chore/deps-weekly \
+    || die "gate.yml cannot be started by hand (add workflow_dispatch); auto-merge is not set"
+  gh pr merge "$1" --auto --merge --match-head-commit "$2"
+}
+
 case "${1-}" in
   check)
     (($# == 1)) || usage
     check
     ;;
-  open-update-pr)
+  open-update-prs)
     (($# == 1)) || usage
-    open_update_pr
+    open_update_prs
+    ;;
+  pr-edit)
+    (($# == 4)) || usage
+    pr_edit "$2" "$3" "$4"
+    ;;
+  pr-close)
+    (($# == 3)) || usage
+    pr_close "$2" "$3"
+    ;;
+  auto-merge)
+    (($# == 3)) || usage
+    auto_merge "$2" "$3"
     ;;
   pr-create)
     (($# == 4)) || usage

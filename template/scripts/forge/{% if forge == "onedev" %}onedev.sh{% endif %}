@@ -3,10 +3,20 @@
 # project template; scripts/update-deps.sh calls it.
 #   scripts/forge/onedev.sh check
 #       fail unless ODEV_HOST, ODEV_PROJECT and ODEV_TOKEN are set
-#   scripts/forge/onedev.sh open-update-pr
-#       print the number of an open PR from a chore/update-deps- branch, or nothing
+#   scripts/forge/onedev.sh open-update-prs
+#       print "NUMBER BRANCH" for each open PR from chore/deps-weekly or an old
+#       chore/update-deps- branch
 #   scripts/forge/onedev.sh pr-create BRANCH TITLE DESCRIPTION
 #       open a PR from BRANCH into the default branch; print its number
+#   scripts/forge/onedev.sh pr-edit NUMBER TITLE DESCRIPTION
+#       replace an open PR's title and description
+#   scripts/forge/onedev.sh pr-close NUMBER NOTE
+#       discard an open PR, with NOTE as the reason
+#   scripts/forge/onedev.sh ci-passed NUMBER
+#       print the PR's merge-preview commit when the CI job passed on it, or nothing
+#   scripts/forge/onedev.sh merge-pr NUMBER BUILT MESSAGE
+#       merge the PR with a merge commit only while its merge preview is still
+#       BUILT, then delete its source branch (what odev pr merge --head does)
 # CI sets the three variables in .onedev-buildspec.yml.
 set -Eeuo pipefail
 shopt -s inherit_errexit
@@ -16,7 +26,7 @@ die() {
   exit 1
 }
 usage() {
-  printf 'usage: scripts/forge/onedev.sh check | open-update-pr | pr-create BRANCH TITLE DESCRIPTION\n' >&2
+  printf 'usage: scripts/forge/onedev.sh check | open-update-prs | pr-create BRANCH TITLE DESCRIPTION | pr-edit NUMBER TITLE DESCRIPTION | pr-close NUMBER NOTE | ci-passed NUMBER | merge-pr NUMBER BUILT MESSAGE\n' >&2
   exit 2
 }
 
@@ -42,22 +52,90 @@ json() {
   printf '%s' "${s//$'\n'/\\n}"
 }
 
-open_update_pr() {
+# pr_id NUMBER: the global id of an open PR in this project; the API takes it, not the number.
+pr_id() {
+  local list id
+  # shellcheck disable=SC2310 # the status is the answer.
+  list=$(open_prs) || die "could not list the open PRs"
+  id=$(awk -v n="$1" '
+    /^  \{/ { id = ""; num = "" }
+    /^    "id"/ { id = $3; sub(/,$/, "", id) }
+    /^    "number"/ { num = $3; sub(/,$/, "", num) }
+    /^  \}/ && num == n && !found { found = id }
+    END { if (found != "") print found }
+  ' <<<"$list")
+  [[ "$id" =~ ^[1-9][0-9]*$ ]] || die "no open PR #$1 in $ODEV_PROJECT"
+  printf '%s' "$id"
+}
+
+open_prs() {
+  api pulls -G --data-urlencode "query=\"Target Project\" is \"$ODEV_PROJECT\" and open" \
+    --data-urlencode offset=0 --data-urlencode count=100
+}
+
+open_update_prs() {
   local list
   check
   # shellcheck disable=SC2310 # the status is the answer.
-  list=$(api pulls -G --data-urlencode "query=\"Target Project\" is \"$ODEV_PROJECT\" and open" \
-    --data-urlencode offset=0 --data-urlencode count=100) \
-    || die "could not list the open PRs, so cannot tell whether an update PR is waiting"
+  list=$(open_prs) || die "could not list the open PRs, so cannot tell whether an update PR is waiting"
   # OneDev pretty-prints JSON; a PR's own fields sit at four spaces, in no fixed order.
   # awk reads it all, so curl is never cut off.
   awk '
     /^  \{/ { branch = ""; num = "" }
-    /^    "sourceBranch"/ { branch = $3 }
+    /^    "sourceBranch"/ { branch = $3; gsub(/[",]/, "", branch) }
     /^    "number"/ { num = $3; sub(/,$/, "", num) }
-    /^  \}/ && branch ~ /^"chore\/update-deps-/ && !found { found = num }
-    END { if (found != "") print found }
+    /^  \}/ && (branch == "chore/deps-weekly" || branch ~ /^chore\/update-deps-/) { print num, branch }
   ' <<<"$list"
+}
+
+# post ID ACTION TEXT: a PR action whose body is raw text (OneDev reads the entity as it is).
+post() {
+  printf '%s' "$3" | api "pulls/$1/$2" -X POST -H 'Content-Type: application/json' --data-binary @- >/dev/null
+}
+
+pr_edit() {
+  local id
+  check
+  id=$(pr_id "$1")
+  post "$id" title "$2"
+  post "$id" description "$3"
+}
+
+pr_close() {
+  local id
+  check
+  id=$(pr_id "$1")
+  post "$id" discard "$2"
+}
+
+# pr_field ID NAME: a string field of the PR.
+pr_field() {
+  api "pulls/$1" | sed -n "s/.*\"$2\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" | head -n 1
+}
+
+ci_passed() {
+  local id built
+  check
+  id=$(pr_id "$1")
+  built=$(pr_field "$id" buildCommitHash)
+  [[ "$built" =~ ^[0-9a-f]{40}$ ]] || return 0
+  # Each build's own status is the first one after its commitHash; step statuses follow.
+  api "pulls/$id/current-builds" | awk -v built="$built" -v number="$1" '
+    /"jobName"/ { job = $3; gsub(/[",]/, "", job); commit = ""; seen = 0 }
+    /"commitHash"/ { commit = $3; gsub(/[",]/, "", commit) }
+    /"status"/ && commit != "" && !seen { seen = 1; if (job == "CI" && commit == built && $3 ~ /SUCCESSFUL/) ok = 1 }
+    END { if (ok) print built }'
+}
+
+merge_pr() {
+  local id project now
+  check
+  id=$(pr_id "$1")
+  now=$(pr_field "$id" buildCommitHash)
+  [[ "$now" == "$2" ]] || die "PR #$1 moved since CI passed; not merged"
+  printf '%s' "$3" | api "pulls/$id/merge" -X POST -H 'Content-Type: application/json' --data-binary @- >/dev/null
+  project=$(api "projects/ids/$ODEV_PROJECT")
+  api "repositories/$project/branches/chore%2Fdeps-weekly" -X DELETE >/dev/null
 }
 
 pr_create() {
@@ -67,7 +145,7 @@ pr_create() {
   [[ "$id" =~ ^[1-9][0-9]*$ ]] || die "OneDev has no project $ODEV_PROJECT"
   base=$(api "repositories/$id/default-branch")
   [[ "$base" =~ ^[A-Za-z0-9._/-]+$ ]] || die "OneDev gave no usable default branch for $ODEV_PROJECT"
-  printf -v body '{"targetProjectId": %s, "sourceProjectId": %s, "targetBranch": "%s", "sourceBranch": "%s", "title": "%s", "description": "%s"}' \
+  printf -v body '{"targetProjectId": %s, "sourceProjectId": %s, "targetBranch": "%s", "sourceBranch": "%s", "title": "%s", "description": "%s", "mergeStrategy": "CREATE_MERGE_COMMIT"}' \
     "$id" "$id" "$(json "$base")" "$(json "$branch")" "$(json "$title")" "$(json "$desc")"
   # OneDev answers with the pull request's global id; its number is a read away.
   # OneDev pretty-prints JSON with a space before each colon.
@@ -82,9 +160,25 @@ case "${1-}" in
     (($# == 1)) || usage
     check
     ;;
-  open-update-pr)
+  open-update-prs)
     (($# == 1)) || usage
-    open_update_pr
+    open_update_prs
+    ;;
+  pr-edit)
+    (($# == 4)) || usage
+    pr_edit "$2" "$3" "$4"
+    ;;
+  pr-close)
+    (($# == 3)) || usage
+    pr_close "$2" "$3"
+    ;;
+  ci-passed)
+    (($# == 2)) || usage
+    ci_passed "$2"
+    ;;
+  merge-pr)
+    (($# == 4)) || usage
+    merge_pr "$2" "$3" "$4"
     ;;
   pr-create)
     (($# == 4)) || usage

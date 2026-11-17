@@ -34,3 +34,13 @@
 :root:not([data-theme="dark"]) .figure-dark {
   display: none;
 }
+
+/* Blume hides the header's "Work with Komputa" button on a phone, and its
+   menu drawer does not show it either. Show it: it fits beside the icons
+   down to a 320px screen. */
+@media (max-width: 639px) {
+  header a[href="https://komputa.io"] {
+    display: inline-flex;
+    white-space: nowrap;
+  }
+}

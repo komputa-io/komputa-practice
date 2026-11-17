@@ -358,7 +358,8 @@ jobs:
 # checks the login with the token. Set them once, from your own shell:
 #   odev secret set ONEDEV_USER          (the login on stdin)
 #   {{ vault_command }} <item> | odev secret set ONEDEV_TOKEN
-# scripts/update-deps.sh opens the PR with curl through the OneDev REST API.{% if split %}
+# scripts/update-deps.sh opens the PR with curl through the OneDev REST API and keeps
+# one PR on chore/deps-weekly. "Merge dependency update" below merges it.{% if split %}
 # No image holds every toolchain, so each language refreshes in its own step and
 # the last step commits them all and opens the PR.{% endif %}
 - name: Update dependencies
@@ -451,3 +452,39 @@ jobs:
   retryCondition: never
   maxRetries: 0
   timeout: 3600
+
+# Daily, three hours after the weekly refresh's hour: merge the open dependency PR when CI passed on its merge preview,
+# the preview is built on the branch tip now, and only dependency files changed.
+# It runs on {{ default_branch }}, where the job secrets are readable, and uses the secrets
+# that "Update dependencies" already names. The merge is a merge commit, and the
+# forge checks the merge preview again as it merges.
+- name: Merge dependency update
+  steps:
+  - !CheckoutStep
+    name: Checkout
+    cloneCredential: !DefaultCredential {}
+    withLfs: false
+    withSubmodules: false
+    condition: ALL_PREVIOUS_STEPS_WERE_SUCCESSFUL
+  - !CommandStep
+    name: Merge when green
+    runInContainer: true
+    image: {{ images['shell'] }}
+    interpreter: !DefaultInterpreter
+      commands: |
+        set -e
+{{- publish_setup() }}
+        scripts/update-deps.sh --merge-ready
+    envVars:
+    - name: ODEV_USER
+      value: '@secret:ONEDEV_USER@'
+    - name: ODEV_TOKEN
+      value: '@secret:ONEDEV_TOKEN@'
+    useTTY: false
+    condition: ALL_PREVIOUS_STEPS_WERE_SUCCESSFUL
+  triggers:
+  - !ScheduleTrigger
+    cronExpression: 0 {{ weekly_minute }} {{ (weekly_hour + 3) % 24 }} * * ?
+  retryCondition: never
+  maxRetries: 0
+  timeout: 600

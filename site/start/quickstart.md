@@ -82,7 +82,7 @@ You link the practice to one clone of its repo, so a `git pull` later updates th
    ~/Code/komputa-practice/hooks/check-live.sh
    ```
 
-   You see one line for each of the eight hooks, and the exit code is 0:
+   You see one line for each of the nine hooks, and the exit code is 0:
 
    ```text
    in step: block-branch-name.sh
@@ -90,6 +90,7 @@ You link the practice to one clone of its repo, so a `git pull` later updates th
    in step: block-dangerous-git.sh
    in step: block-destructive-delete.sh
    in step: block-foreground-wait.sh
+   in step: block-issue-estimate.sh
    in step: block-operator-screen.sh
    in step: block-secret-write.sh
    in step: block-test-weakening.sh

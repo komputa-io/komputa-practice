@@ -51,6 +51,21 @@ Use this guide for one pull request: a bug fix, a small feature, a refactor or a
 
    On OneDev, a project made with `trust_green_ci` runs two jobs: `CI` on the pull request and `CI on main` on the push. When the pull request's green build ran on exactly the tree that main now holds, `CI on main` skips the gate and the build takes seconds. The job secret `ONEDEV_TOKEN` (a token that reads the project's builds, authorized on main only) makes this work. The spec is seeded once, so an existing project copies the two jobs from the template by hand; `scripts/gate.sh --full` fails and names each seeded line that the spec lacks.
 
+## Estimating an issue
+
+An agent that files an issue puts one line in its body, so Sitrep Live can forecast from sizes and not from a count of issues:
+
+```text
+Estimate: M (S–L). Basis: #298, #301 (both M, this adds a migration).
+```
+
+- **Size.** One of `S`, `M`, `L` or `XL` (1, 2, 3 and 5 or 8 points, relative to the project's own work), and the range holds it: low ≤ size ≤ high. The dash may be `–` or `-`.
+- **Range.** It carries the confidence. `M (M–M)` is a known path. `M (S–L)` has some unknowns. `M (S–XL)` is novel.
+- **Basis.** Base the size on 3–5 closed issues in the project that look alike, and name them. On a new project, say that the basis is experience. Sitrep Live finds them for you: run `npx tsx scripts/reference.ts --project <forge key> --q "words of the title" --json` in its `app/` folder. It lists closed issues with an estimate that look alike, and what each took (spend, agent time, pull requests, why it grew).
+- **Hook.** `hooks/block-issue-estimate.sh` refuses `gh issue create` and `odev issue create` without a well-formed line, and names the format. An issue that also has the `needs-triage` label passes, so an issue a person files in the web UI is triaged in. A repo can opt out with `git config komputa.estimate-rule off`.
+- **Link.** Sitrep Live ties a pull request to issue N when its branch is `<kind>/<N>-…` or its body says `Closes #N`, `Fixes #N` or `Resolves #N`. It never guesses from a title, so name the issue in the branch.
+- **Grew.** When the work ended larger than its estimate, the pull request that closes the issue can say why with one line, `Grew: <reason>`. The reason is one of `hidden dependency`, `wrong assumption`, `scope added`, `infrastructure or flakes`, `unclear spec`.
+
 ## Check it worked
 
 - CI passed on the head commit of the pull request.

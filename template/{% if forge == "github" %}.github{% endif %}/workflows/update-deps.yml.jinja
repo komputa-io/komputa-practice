@@ -58,10 +58,13 @@
 # Every {{ ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'][weekly_day] }} at {{ '%02d:%02d' | format(weekly_hour, weekly_minute) }} UTC, refresh the dependencies within their ranges and open a PR, as
 # the OneDev build spec does. Start it by hand with workflow_dispatch. The refresh
 # jobs run in the gate's images and write no secret but the read-only package
-# logins; the last job has the write token. It needs the repository setting
-# "Allow GitHub Actions to create and approve pull requests" on. A PR opened with
-# the job token does not start the gate, and its text says so: close and reopen
-# the PR, or push to its branch as a person, to start CI.
+# logins; the last job has the write token. It needs the repository settings
+# "Allow GitHub Actions to create and approve pull requests" and "Allow
+# auto-merge" on. One PR a project: the job replaces chore/deps-weekly and
+# updates its open PR. A PR opened with the job token does not start the gate, so
+# the last job starts it on the branch with workflow_dispatch (gate.yml needs
+# that trigger), then sets the PR to merge when the required checks pass, for a
+# PR that changes dependency files only.
 name: update-deps
 
 on:
@@ -100,6 +103,7 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
+      actions: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

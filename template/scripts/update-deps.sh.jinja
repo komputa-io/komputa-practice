@@ -4,12 +4,22 @@
 # Refresh dependencies within their ranges and open a PR. Run weekly by CI
 # (the "Update dependencies" job); safe to run by hand. scripts/forge/{{ forge }}.sh
 # opens the PR.
+# One PR a project: the commit goes to chore/deps-weekly, replacing last week's,
+# and its open PR is updated in place. An open PR from an old chore/update-deps-
+# branch is closed with a note that names the new one. When every changed file
+# is a dependency file (or only an image digest moved), the PR merges itself when
+# CI passes on its head: {% if forge == 'github' %}GitHub auto-merge, after the job starts the gate on the branch{% else %}the "Merge dependency update" job (--merge-ready) merges it, only
+# while the merge preview that CI passed is still the branch tip{% endif %}. Any other file leaves it for a
+# person, and the PR text says so. A red PR stays open.
 #   scripts/update-deps.sh            refresh, commit to a branch, open a PR
 #   scripts/update-deps.sh --dry-run  refresh and show the diff; commit nothing
 #   scripts/update-deps.sh --refresh-only [--only SECTION ...]
 #                                     refresh only, commit nothing. Sections: {{ (langs + ['images', 'deslop']) | join(', ') }}
 #   scripts/update-deps.sh --publish-only
-#                                     commit what a refresh left and open a PR
+#                                     commit what a refresh left and open a PR{% if forge == 'onedev' %}
+#   scripts/update-deps.sh --merge-ready
+#                                     merge the open update PR when CI passed on its
+#                                     head and it changes dependency files only{% endif %}
 # CI uses the last two when no one image holds every toolchain.
 # Never crosses a major version: the ranges cap it, and a new major becomes an
 # issue for a person to read the changelog. Only versions at least seven days
@@ -28,7 +38,7 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$root"
 sections=({{ (langs + ['images', 'deslop']) | join(' ') }})
 usage() {
-  printf 'usage: scripts/update-deps.sh [--dry-run | --refresh-only [--only SECTION ...] | --publish-only]\nsections: %s\n' "${sections[*]}" >&2
+  printf 'usage: scripts/update-deps.sh [--dry-run | --refresh-only [--only SECTION ...] | --publish-only{% if forge == 'onedev' %} | --merge-ready{% endif %}]\nsections: %s\n' "${sections[*]}" >&2
   exit 2
 }
 dry=0
@@ -39,6 +49,9 @@ while (($# > 0)); do
     --dry-run | -n) dry=1 ;;
     --refresh-only) step=refresh ;;
     --publish-only) step=publish ;;
+{%- if forge == 'onedev' %}
+    --merge-ready) step=merge ;;
+{%- endif %}
     --only)
       (($# > 1)) || usage
       only+=("$2")
@@ -61,6 +74,68 @@ notes="$(git rev-parse --git-dir)/update-deps-images.txt"
 if [[ "$step" == all ]]; then
   [[ -z "$(git status --porcelain)" ]] || die "the working tree has changes; commit or stash them first"
 fi
+
+forge=scripts/forge/{{ forge }}.sh
+# only_dependency_files [REV]: print each file REV (HEAD) changed that is not a
+# dependency file. A lock file or manifest is one; so is the Deslop pin; so is any
+# file whose diff moves only sha256: image digests. Nothing printed means the PR
+# may merge itself.
+only_dependency_files() {
+  local f rev=${1:-HEAD}
+  while IFS= read -r f; do
+    case "${f##*/}" in
+      uv.lock | pyproject.toml | package.json | package-lock.json | Directory.Packages.props | Cargo.toml | Cargo.lock | deslop.pin) continue ;;
+      dotnet-tools.json) [[ "$f" == */.config/dotnet-tools.json || "$f" == .config/dotnet-tools.json ]] && continue ;;
+    esac
+    # shellcheck disable=SC2310 # the status is the answer.
+    ! digest_only "$f" "$rev" || continue
+    printf '%s\n' "$f"
+  done < <(git diff-tree --no-commit-id --name-only -r --no-renames "$rev")
+}
+# digest_only FILE REV: true when REV changed FILE only by sha256: digests.
+digest_only() {
+  local mask='s/sha256:[0-9a-f]{64}/sha256:D/g' old new diff
+  # The file header ends at the +++ line; every line after it is a hunk header or a change.
+  diff=$(git diff -U0 "$2^" "$2" -- "$1" | sed '1,/^+++/d')
+  old=$(sed -n '/^-/{s/^-//;p}' <<<"$diff" | sed -E "$mask")
+  new=$(sed -n '/^+/{s/^+//;p}' <<<"$diff" | sed -E "$mask")
+  [[ -n "$old" && "$old" == "$new" ]]
+}
+
+{%- if forge == 'onedev' %}
+if [[ "$step" == merge ]]; then
+  # Runs on the default branch, where the job's secrets are readable. It merges the
+  # PR only while the merge preview that CI passed is built on the branch tip now,
+  # and only for dependency files; the forge checks the preview again at the merge.
+  "$forge" check
+  git fetch -q origin chore/deps-weekly
+  tip=$(git rev-parse FETCH_HEAD)
+  number=$("$forge" open-update-prs | awk '$2 == "chore/deps-weekly" { print $1; exit }')
+  [[ -n "$number" ]] || {
+    printf 'update-deps: no update PR is open\n'
+    exit 0
+  }
+  built=$("$forge" ci-passed "$number")
+  [[ -n "$built" ]] || {
+    printf 'update-deps: CI has not passed on #%s yet\n' "$number"
+    exit 0
+  }
+  git fetch -q origin "refs/pulls/$number/merge"
+  [[ "$(git rev-parse FETCH_HEAD)" == "$built" && "$(git rev-parse FETCH_HEAD^2)" == "$tip" ]] \
+    || {
+      printf 'update-deps: #%s: the branch moved after CI passed; not merged\n' "$number"
+      exit 0
+    }
+  blockers=$(only_dependency_files "$tip")
+  [[ -z "$blockers" ]] || {
+    printf 'update-deps: #%s changes files that are not dependency files; a person merges it\n' "$number"
+    exit 0
+  }
+  "$forge" merge-pr "$number" "$built" "Merges PR #$number from chore/deps-weekly"
+  printf 'update-deps: merged #%s\n' "$number"
+  exit 0
+fi
+{%- endif %}
 
 if [[ "$step" != publish ]]; then
 {%- if 'python' in langs %}
@@ -301,21 +376,50 @@ if [[ "$dry" == 1 ]]; then
   exit 0
 fi
 
-# The forge script opens the PR; check its settings before anything is pushed.
-forge=scripts/forge/{{ forge }}.sh
+# Check the forge's settings before anything is pushed.
 "$forge" check
-waiting=$("$forge" open-update-pr)
-[[ -z "$waiting" ]] || die "an update PR is already open (#${waiting#\#}); merge or close it first"
 
-branch="chore/update-deps-$(date +%Y-%m-%d)"
-git switch -c "$branch"
-git commit -qam "chore(deps): refresh dependencies within their ranges"
-git push -q -u origin "$branch"
+# Listing first: a forge that cannot answer stops the run before anything is pushed.
+open_prs=$("$forge" open-update-prs)
+branch=chore/deps-weekly
+git fetch -q origin "$branch" 2>/dev/null || true
+git switch -q -C "$branch"
+git add -A
+git commit -qm "chore(deps): refresh dependencies within their ranges"
+blockers=$(only_dependency_files)
+# The branch is the CI's own: each run replaces the last one's content.
+git push -q --force-with-lease -u origin "$branch"
 title='chore(deps): refresh dependencies within their ranges'
-desc=$'## Why\n\nThe weekly refresh: newer versions within the declared ranges, each at least seven days old.\n\n## Test plan\n\n- No new tests. The existing gate is the test of a dependency refresh.\n\n## Verification\n\n{% if forge == 'github' %}- The gate does not start on a PR opened with the job token. Close and reopen this PR, or push to its branch as a person, to start it. Merge only when it is green.{% else %}- CI runs the full gate on this PR. Merge only when it is green.{% endif %}'
+desc=$'## Why\n\nThe weekly refresh: newer versions within the declared ranges, each at least seven days old.\n\n## Test plan\n\n- No new tests. The existing gate is the test of a dependency refresh.\n\n## Verification\n\n'
+if [[ -n "$blockers" ]]; then
+  desc+=$'- A person merges this PR when CI is green: it changes files that are not dependency files:\n  - '${blockers//$'\n'/$'\n  - '}
+else
+  desc+=$'- It changes dependency files only, so it merges itself when CI passes on its head. If it is still open after CI is green, merge it by hand.'
+fi
 if [[ -s "$notes" ]]; then
   desc+=$'\n\n## Image pins\n\n'$(sed 's/^/- /' "$notes")
 fi
-pr=$("$forge" pr-create "$branch" "$title" "$desc")
+pr='' old=()
+while read -r number name; do
+  [[ -n "$number" ]] || continue
+  if [[ "$name" == "$branch" && -z "$pr" ]]; then pr=$number; else old+=("$number"); fi
+done <<<"$open_prs"
+if [[ -n "$pr" ]]; then
+  "$forge" pr-edit "$pr" "$title" "$desc"
+  ref="#$pr"
+else
+  ref=$("$forge" pr-create "$branch" "$title" "$desc")
+  pr=${ref##*/}
+  pr=${pr#\#}
+fi
 rm -f "$notes"
-printf 'update-deps: opened PR %s from %s\n' "$pr" "$branch"
+for n in "${old[@]}"; do
+  "$forge" pr-close "$n" "Replaced by $ref, which the weekly update now keeps up to date on chore/deps-weekly."
+done
+{%- if forge == 'github' %}
+if [[ -z "$blockers" ]]; then
+  # A failed request leaves the PR open for a person; it never fails the job.
+  "$forge" auto-merge "$pr" "$(git rev-parse HEAD)" || printf 'update-deps: auto-merge is not set on %s; a person merges it\n' "$ref" >&2
+fi
+{%- endif %}
+printf 'update-deps: PR %s from %s\n' "$ref" "$branch"

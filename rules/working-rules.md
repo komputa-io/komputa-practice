@@ -65,6 +65,7 @@ add a check, add its row. When a mistake can no longer happen, drop its rule.
 | A lead works in its own worktree when another session shares the checkout | `hooks/block-dangerous-git.sh` refuses a branch change there when `hc ls` shows another live agent terminal in the work tree |
 | No delete that cannot be undone | `hooks/block-destructive-delete.sh` refuses it |
 | Every branch is `<kind>/<name>` (kinds: feat fix docs refactor chore perf test ci prune; the issue number first when there is one) | `hooks/block-branch-name.sh` refuses a git command that makes or renames a branch with another name, this repo's CI judges each pull request's branch with the same hook, and the template's gate refuses a commit on such a branch and, on GitHub, the pull request; `scripts/program-scorecard.py` counts by these kinds |
+| Every issue an agent files carries an `Estimate:` line (`Estimate: M (S–L). Basis: ...`) | `hooks/block-issue-estimate.sh` refuses `gh issue create` and `odev issue create` whose body has no well-formed line; an issue with `needs-triage` and a body it cannot read pass; the template's issue and PR templates carry the line; `hooks/block-issue-estimate.test.sh` tests it |
 | No private item in this shareable repo | `scripts/scrub-check.sh`, in the git hooks and CI (CI reads each commit of a PR, and the denylist from the `SCRUB_DENYLIST` secret when set) |
 | Every check runs on every pull request | `scripts/check.sh`, in CI |
 | A merge needs green checks at the head | Branch protection on `main` requires the `check`, `template` and `docs` jobs |

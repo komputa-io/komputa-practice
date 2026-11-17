@@ -105,6 +105,7 @@ FORGE_FILES = {
     ],
     "github": [
         ".github/pull_request_template.md",
+        ".github/ISSUE_TEMPLATE/issue.md",
         ".github/workflows/gate.yml",
         ".github/workflows/deslop-nightly.yml",
         ".github/workflows/update-deps.yml",
@@ -1321,7 +1322,7 @@ url=
 prev=
 for a in "$@"; do
   if [[ "$prev" == -H && "$a" == @* ]]; then cat "${a#@}" >>"$log/headers"; fi
-  if [[ "$prev" == --data-binary && "$a" == @- ]]; then cat >"$log/body"; fi
+  if [[ "$prev" == --data-binary && "$a" == @- ]]; then cat >"$log/body"; cp "$log/body" "$log/body.$(basename "${*: -1}")"; fi
   [[ "$a" == http* ]] && url=$a
   [[ "$a" == -G ]] && listing=1
   prev=$a
@@ -1331,8 +1332,15 @@ case "$url" in
   */~api/repositories/*/default-branch) printf '%s' "${STUB_BASE-main}" ;;
   */~api/pulls) if [[ -n "${listing-}" ]]; then
       [[ -z "${STUB_LIST_FAIL-}" ]] || exit 22
-      printf '%s' "${STUB_OPEN-[]}"
+      # A second listing is the one after the PR opened.
+      if [[ -e "$log/listed" && -n "${STUB_OPEN_AFTER-}" ]]; then printf '%s' "$STUB_OPEN_AFTER"
+      else printf '%s' "${STUB_OPEN-[]}"; fi
+      : >"$log/listed"
     else printf '1987'; fi ;;
+  */~api/pulls/1007) printf '{\n  "id" : 1007,\n  "buildCommitHash" : "%s"\n}\n' "${STUB_BUILT-}" ;;
+  */~api/pulls/1007/current-builds) printf '[ {\n"jobName" : "CI",\n"commitHash" : "%s",\n"status" : "%s",\n"stepExecutions" : {\n"status" : "FAILED"\n}\n} ]\n' "${STUB_BUILT-}" "${STUB_CI-SUCCESSFUL}" ;;
+  */~api/pulls/*/title | */~api/pulls/*/description | */~api/pulls/*/discard | */~api/pulls/*/merge) ;;
+  */~api/repositories/42/branches/*) ;;
   # OneDev pretty-prints, one field per line, a space before each colon.
   */~api/pulls/1987) printf '{\n  "id" : 1987,\n  "number" : 7,\n  "numberScopeId" : 42\n}\n' ;;
   *) exit 22 ;;
@@ -1344,6 +1352,9 @@ STUB_GH = r"""#!/usr/bin/env bash
 # Records each call and answers like gh.
 printf '%s\0' "$@" >>"$STUB_LOG/gh"
 [[ "$1 $2" == "pr create" ]] && printf 'https://github.test/team/demo/pull/7\n'
+[[ "$1 $2" == "repo view" ]] && printf 'main\n'
+[[ "$1" == api ]] && printf '%s\n' "${STUB_REQUIRED-2}"
+[[ "$1 $2" == "workflow list" ]] && printf 'gate\n'
 if [[ "$1 $2" == "pr list" ]]; then
   [[ -z "${STUB_LIST_FAIL-}" ]] || exit 1
   printf '%s' "${STUB_OPEN-}"
@@ -1396,7 +1407,7 @@ def test_the_refresh_opens_its_pr_through_the_onedev_api(tmp_path):
     done = refresh(out, env)
     assert done.returncode == 0, done.stdout + done.stderr
     branch = git(out, "branch", "--show-current")
-    assert branch.startswith("chore/update-deps-")
+    assert branch == "chore/deps-weekly"
     assert git(out, "ls-remote", "origin", branch) != ""
     body = json.loads((log / "body").read_text())
     assert body["targetProjectId"] == body["sourceProjectId"] == 42
@@ -1404,7 +1415,8 @@ def test_the_refresh_opens_its_pr_through_the_onedev_api(tmp_path):
     assert body["title"] == "chore(deps): refresh dependencies within their ranges"
     assert body["description"].startswith("## Why\n\nThe weekly refresh")
     assert "## Verification" in body["description"]
-    assert f"opened PR #7 from {branch}" in done.stdout
+    assert body["mergeStrategy"] == "CREATE_MERGE_COMMIT"
+    assert f"PR #7 from {branch}" in done.stdout
 
 
 def _open_pr(number: int, branch: str) -> str:
@@ -1417,19 +1429,37 @@ def _open_pr(number: int, branch: str) -> str:
 
 
 OPEN_UPDATE_PRS = (
-    "[\n" + _open_pr(5, "feat/x") + ",\n" + _open_pr(9, "chore/update-deps-2026-11-09") + "\n]"
+    "[\n"
+    + _open_pr(5, "feat/x")
+    + ",\n"
+    + _open_pr(9, "chore/deps-weekly")
+    + ",\n"
+    + _open_pr(4, "chore/update-deps-2026-11-09")
+    + "\n]"
 )
+OPEN_CREATED = "[\n" + _open_pr(7, "chore/deps-weekly") + "\n]"
+GITHUB_UPDATE_PRS = "9 chore/deps-weekly\n4 chore/update-deps-2026-11-09\n"
 OPEN_OTHER_PRS = "[\n" + _open_pr(5, "feat/x") + "\n]"
 
 
-@pytest.mark.parametrize(("forge", "open_pr"), [("onedev", OPEN_UPDATE_PRS), ("github", "9")])
-def test_the_refresh_stops_while_an_update_pr_is_open(tmp_path, forge, open_pr):
+@pytest.mark.parametrize(
+    ("forge", "open_pr"), [("onedev", OPEN_UPDATE_PRS), ("github", GITHUB_UPDATE_PRS)]
+)
+def test_a_second_run_updates_the_one_pr_and_closes_an_old_style_one(tmp_path, forge, open_pr):
     out, log, env = _refreshable(tmp_path, forge=forge)
     done = refresh(out, {**env, "STUB_OPEN": open_pr})
-    assert done.returncode == 1
-    assert "update-deps: an update PR is already open (#9); merge or close it first" in done.stderr
-    assert git(out, "branch", "--show-current") == "main"
-    assert not (log / "body").exists()
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert "PR #9 from chore/deps-weekly" in done.stdout
+    if forge == "onedev":
+        urls = (log / "args").read_text()
+        assert "pulls/1009/title" in urls and "pulls/1009/description" in urls
+        assert "pulls/1004/discard" in urls and "pulls/1987" not in urls
+        assert "Replaced by #9" in (log / "body.discard").read_text()
+    else:
+        calls = (log / "gh").read_text().split("\0")
+        assert "create" not in calls
+        assert calls[calls.index("edit") - 1 :][:3] == ["pr", "edit", "9"]
+        assert calls[calls.index("close") - 1 :][:3] == ["pr", "close", "4"]
 
 
 @pytest.mark.parametrize("forge", ["onedev", "github"])
@@ -1560,8 +1590,126 @@ def test_the_refresh_opens_its_pr_through_gh_on_github(tmp_path):
     )
     body = create[create.index("--body") + 1]
     assert body.startswith("## Why\n\nThe weekly refresh")
-    assert "The gate does not start on a PR opened with the job token" in body
-    assert f"opened PR https://github.test/team/demo/pull/7 from {branch}" in done.stdout
+    assert "A person merges this PR when CI is green" in body
+    assert f"PR https://github.test/team/demo/pull/7 from {branch}" in done.stdout
+
+
+DIGEST = "sha256:" + "a" * 64
+DIGEST2 = "sha256:" + "b" * 64
+
+
+def _merge_set(log: Path) -> bool:
+    return "--auto" in (log / "gh").read_text().split("\0")
+
+
+@pytest.mark.parametrize(
+    ("changed", "merges"),
+    [
+        ({"uv.lock": "x\n"}, True),
+        ({"uv.lock": "x\n", "web/package.json": "{}\n", "web/package-lock.json": "{}\n"}, True),
+        ({"scripts/deslop.pin": "version=9\n", ".config/dotnet-tools.json": "{}\n"}, True),
+        ({"ci.yml": f"image: a:1@@{DIGEST2}\n"}, True),
+        ({"uv.lock": "x\n", "src/app.py": "print()\n"}, False),
+        ({"README.md": "refreshed\n"}, False),
+        ({"ci.yml": f"image: a:2@@{DIGEST2}\n"}, False),
+        ({"tools/dotnet-tools.json": "{}\n"}, False),
+        ({"src/new.py": "print()\n"}, False),
+        ({"ci.yml": f"-- note\nimage: a:2@@{DIGEST2}\n"}, False),
+    ],
+)
+def test_a_pr_merges_itself_only_when_every_changed_file_is_a_dependency_file(
+    tmp_path, changed, merges
+):
+    out, log, env = _refreshable(tmp_path, forge="github")
+    git(out, "reset", "-q", "--hard")
+    (out / "ci.yml").write_text(f"image: a:1@@{DIGEST}\n")
+    git(out, "add", "-A")
+    git(out, "commit", "-q", "--no-verify", "-m", "base")
+    git(out, "push", "-q", "--no-verify", "origin", "main")
+    for name, text in changed.items():
+        (out / name).parent.mkdir(parents=True, exist_ok=True)
+        (out / name).write_text(text)
+    done = refresh(out, env)
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert _merge_set(log) is merges
+    if not merges:
+        assert "A person merges this PR" in (log / "gh").read_text()
+
+
+def test_the_github_refresh_sets_the_merge_on_the_head_the_gate_ran_on(tmp_path):
+    out, log, env = _refreshable(tmp_path, forge="github")
+    git(out, "reset", "-q", "--hard")
+    (out / "uv.lock").write_text("x\n")
+    git(out, "add", "-A")
+    done = refresh(out, env)
+    assert done.returncode == 0, done.stdout + done.stderr
+    calls = (log / "gh").read_text().split("\0")
+    assert calls[calls.index("run") - 1 :][:5] == [
+        "workflow",
+        "run",
+        "gate.yml",
+        "--ref",
+        "chore/deps-weekly",
+    ]
+    merge = calls[calls.index("merge") - 1 :][:7]
+    assert merge == [
+        "pr",
+        "merge",
+        "7",
+        "--auto",
+        "--merge",
+        "--match-head-commit",
+        git(out, "rev-parse", "HEAD"),
+    ]
+
+
+def test_no_merge_is_set_when_github_requires_no_checks(tmp_path):
+    out, log, env = _refreshable(tmp_path, forge="github")
+    git(out, "reset", "-q", "--hard")
+    (out / "uv.lock").write_text("x\n")
+    done = refresh(out, {**env, "STUB_REQUIRED": "0"})
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert "a person merges it" in done.stderr
+    assert not _merge_set(log)
+
+
+def _ready_to_merge(tmp_path: Path, moved: bool):
+    """A published dependency PR, CI green on its merge preview; the branch moves after when asked."""
+    out, log, env = _refreshable(tmp_path)
+    git(out, "reset", "-q", "--hard")
+    (out / "uv.lock").write_text("x\n")
+    assert refresh(out, env).returncode == 0
+    tip = git(out, "rev-parse", "HEAD")
+    git(out, "switch", "-q", "main")
+    preview = git(out, "commit-tree", f"{tip}^{{tree}}", "-p", "main", "-p", tip, "-m", "preview")
+    git(out, "push", "-q", "--no-verify", "origin", f"{preview}:refs/pulls/7/merge")
+    if moved:
+        git(out, "switch", "-q", "chore/deps-weekly")
+        (out / "uv.lock").write_text("y\n")
+        git(out, "commit", "-qam", "late", "--no-verify")
+        git(out, "push", "-q", "--no-verify", "origin", "chore/deps-weekly")
+        git(out, "switch", "-q", "main")
+    env |= {"STUB_OPEN": OPEN_CREATED, "STUB_BUILT": preview}
+    (log / "args").unlink()
+    return out, log, env
+
+
+@pytest.mark.parametrize("moved", [False, True])
+def test_onedev_merges_a_green_dependency_pr_only_while_its_head_is_the_one_ci_passed(
+    tmp_path, moved
+):
+    out, log, env = _ready_to_merge(tmp_path, moved)
+    done = subprocess.run(
+        [str(out / "scripts/update-deps.sh"), "--merge-ready"],
+        cwd=out,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    assert done.returncode == 0, done.stdout + done.stderr
+    urls = (log / "args").read_text()
+    assert ("pulls/1007/merge" in urls and "-X DELETE" in urls) is not moved
+    assert moved is ("moved after CI" in done.stdout)
 
 
 def test_the_github_refresh_runs_one_at_a_time_and_never_cancels_a_running_one(tmp_path):
@@ -1580,7 +1728,15 @@ def test_the_github_refresh_runs_weekly_in_the_gate_images_and_only_the_last_job
     assert wf[True]["schedule"] == [{"cron": "0 4 * * 1"}] and "workflow_dispatch" in wf[True]
     assert wf["permissions"] == {"contents": "read"}
     jobs = wf["jobs"]
-    assert jobs["open-pr"]["permissions"] == {"contents": "write", "pull-requests": "write"}
+    assert jobs["open-pr"]["permissions"] == {
+        "contents": "write",
+        "pull-requests": "write",
+        "actions": "write",
+    }
+    assert (
+        "workflow_dispatch"
+        in yaml.safe_load((out / ".github/workflows/gate.yml").read_text())[True]
+    )
     images = {j["container"] for j in jobs.values() if "container" in j}
     assert images <= {j["container"] for j in gate.values() if "container" in j}
     assert set(jobs["open-pr"]["needs"]) == set(jobs) - {"open-pr"}
@@ -2069,7 +2225,11 @@ def _deslop_release(tmp_path: Path, exit_code: int) -> dict[str, str]:
     """A fake release tarball, a pin for it, and the env that points the script at both."""
     pkg = tmp_path / "pkg/deslop-0.40.1-linux-x64"
     pkg.mkdir(parents=True)
-    (pkg / "deslop").write_text(f'#!/usr/bin/env bash\necho "$@" >"$STUB_LOG"\nexit {exit_code}\n')
+    (pkg / "deslop").write_text(
+        f'#!/usr/bin/env bash\necho "$@" >"$STUB_LOG"\n'
+        'while [ $# -gt 0 ]; do [ "$1" = --diff ] && { iconv -f utf-8 -t utf-8 "$2" >/dev/null || exit 2; }; shift; done\n'
+        f"exit {exit_code}\n"
+    )
     (pkg / "deslop").chmod(0o755)
     rel = tmp_path / "rel/v0.40.1"
     rel.mkdir(parents=True)
@@ -2083,7 +2243,7 @@ def _deslop_release(tmp_path: Path, exit_code: int) -> dict[str, str]:
 
 
 def _deslop_pr(
-    tmp_path: Path, sha: str = "", exit_code: int = 0
+    tmp_path: Path, sha: str = "", exit_code: int = 0, latin1: bool = False
 ) -> subprocess.CompletedProcess[str]:
     env = _deslop_release(tmp_path, exit_code)
     tar = tmp_path / "rel/v0.40.1/deslop-0.40.1-linux-x64.tar.gz"
@@ -2095,8 +2255,13 @@ def _deslop_pr(
     _repo(repo)
     git(repo, "add", "-A")
     git(repo, "commit", "-q", "--no-verify", "-m", "init")
+    if latin1:
+        git(repo, "checkout", "-q", "-b", "feat/x")
+        (repo / "fixture.txt").write_bytes(b"caf\xe9\n")
+        git(repo, "add", "-A")
+        git(repo, "commit", "-q", "--no-verify", "-m", "fixture")
     return subprocess.run(
-        [str(repo / "scripts/deslop-pr.sh"), "HEAD"],
+        [str(repo / "scripts/deslop-pr.sh"), "main" if latin1 else "HEAD"],
         cwd=repo,
         capture_output=True,
         text=True,
@@ -2109,6 +2274,11 @@ def test_the_pr_check_scans_only_the_diff_and_never_fails_over_a_finding(tmp_pat
     assert done.returncode == 0, done.stderr
     argv = (tmp_path / "argv").read_text()
     assert "--only-changed --no-incremental" in argv and "--no-fail-over" in argv
+
+
+def test_a_diff_with_a_latin1_line_still_scans(tmp_path):
+    done = _deslop_pr(tmp_path, latin1=True)
+    assert done.returncode == 0, done.stderr
 
 
 def test_a_wrong_checksum_or_a_deslop_crash_fails_the_check(tmp_path):
@@ -2445,6 +2615,7 @@ def test_each_slot_gives_its_own_nightly_and_weekly_time(tmp_path, slot, nightly
     spec = (onedev / ".onedev-buildspec.yml").read_text()
     assert f"cronExpression: 0 {nm} {nh} * * ?" in spec
     assert f"cronExpression: 0 {wm} {wh} ? * {day}" in spec
+    assert f"cronExpression: 0 {wm} {(int(wh) + 3) % 24} * * ?" in spec  # the daily merge job
     github = render(tmp_path / "g", ["shell"], forge="github", schedule_slot=slot)
     flows = github / ".github/workflows"
     dow = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"].index(day)

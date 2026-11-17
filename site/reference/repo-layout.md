@@ -25,7 +25,7 @@ Each path in the practice repo, and what it holds.
 | `scripts/scheduled-failures.py` | Posts to Mattermost `#alerts` each failed scheduled OneDev job (Update dependencies, Deslop nightly) that it has not reported before. Run it from a timer; it needs `ODEV_HOST`, `ODEV_TOKEN` and the `#alerts` webhook. |
 | `docs/context-economics.md` | Where the tokens go when agents run as workers: what we measured on a real project, what we learned, and why the budget and wait rules say what they say. |
 | `hooks/block-secret-write.sh` | A Claude Code `PreToolUse` hook for Write and Edit (and Codex `apply_patch`). It refuses content that matches a secret pattern, and names the machine's secret tool from `HOOK_SECRET_TOOL`. |
-| `hooks/block-credential-read.sh` | A Claude Code `PreToolUse` hook for Read and Bash. It refuses reading a credential file (SSH keys, `.netrc`, `.env`, the Claude credentials); counts and key names pass. |
+| `hooks/block-credential-read.sh` | A Claude Code `PreToolUse` hook for Read and Bash. It refuses reading a credential file (SSH keys, `.netrc`, `.env`, the Claude credentials); counts and key names pass. It also refuses a call to OneDev's `projects/<id>/setting` document, which holds every job secret in clear. |
 | `hooks/hooks.test.sh` | Tests for the secret and credential hooks, with hostile payloads. |
 | `hooks/gates.json` | The `PreToolUse` entries that register these hooks in `~/.claude/settings.json`. |
 | `hooks/check-live.sh` | Compares each hook that `~/.claude/settings.json` registers with its copy here, since the live hooks are plain copies. |
@@ -35,6 +35,8 @@ Each path in the practice repo, and what it holds.
 | `hooks/block-destructive-delete.test.sh` | Tests for the delete hook, with its hostile inputs. |
 | `hooks/block-branch-name.sh` | A Claude Code `PreToolUse` hook for Bash. It refuses a git command that makes or renames a branch whose name is not `<kind>/<name>`, so pull requests can be counted by kind. CI runs it on each pull request's branch. |
 | `hooks/block-branch-name.test.sh` | Tests for the branch-name hook. |
+| `hooks/block-issue-estimate.sh` | A Claude Code `PreToolUse` hook for Bash. It refuses `gh issue create` and `odev issue create` whose body has no `Estimate: <size> (<low>–<high>).` line, so Sitrep Live can forecast from sizes. An issue labelled `needs-triage` and a body the hook cannot read pass. |
+| `hooks/block-issue-estimate.test.sh` | Tests for the estimate hook. |
 | `hooks/block-operator-screen.sh` | A Claude Code `PreToolUse` hook for Bash and the `claude-in-chrome` tools. In a worker only (an `hc` terminal started from a template or by a parent, as `hc get` on its own address shows), it refuses commands that open the operator's browser, a browser without `--headless`, and every `claude-in-chrome` tool. |
 | `hooks/block-operator-screen.test.sh` | Tests for the hook. |
 | `hooks/block-foreground-wait.sh` | A Claude Code `PreToolUse` hook for Bash. In a worker only, it refuses a call that is not a background command and runs `gh pr checks --watch`, `gh run watch`, `watch`, `odev pr checks --wait`, `merge-on-green`, `hc wait` or a `sleep` over 10 s, also inside a loop, `{ }` or `bash -c`. It also refuses an `until` or `while` loop that sleeps with no `timeout` command, even in the background. |
