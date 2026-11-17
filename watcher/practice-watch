@@ -213,16 +213,28 @@ close_old() {
 
 # adopt APPLY: put each live top-level agent session with no watch label on the watch as the lead, as `on` does. A session
 # labelled watch=off (or waits) keeps its label; an old one (watch.old=1) is closing; a worker ends with its parent.
+# The label belongs to the hc terminal, not the agent, so watch.pid records the agent process it was set for. An agent
+# restarted in the same pane has a new pid: the old session's off or waits does not bind it, and it is adopted.
+# A watched terminal with no watch.pid yet gets the current one.
 adopt() {
-  local apply=$1 live addr info
+  local apply=$1 live addr info pid seen
   live=$("${hcc[@]}" ls --json) || return 0
   for addr in $(jq -r '.terminals[].address' <<<"$live"); do
     info=$("${hcc[@]}" get "$addr" --json) || continue
-    jq -e '.state == "live" and (.parent // "") == "" and (.labels.watch // "") == "" and (.labels["watch.old"] // "") == ""
+    jq -e '.state == "live" and (.parent // "") == "" and (.labels["watch.old"] // "") == ""
       and ((.foreground.argv[0] // "") | split("/") | last | IN("claude", "codex"))' <<<"$info" >/dev/null || continue
+    pid=$(jq -r '.foreground.pid // "" | tostring' <<<"$info")
+    seen=$(jq -r '.labels["watch.pid"] // ""' <<<"$info")
+    if [[ -n $(jq -r '.labels.watch // ""' <<<"$info") ]]; then
+      if [[ -z $seen && -n $pid ]]; then
+        ((apply)) && "${hcc[@]}" label "$addr" "watch.pid=$pid" >/dev/null
+        continue
+      fi
+      [[ -n $pid && $seen != "$pid" ]] || continue
+    fi
     if ((! apply)); then
-      printf 'practice-watch: %s: would watch it as the lead (a top-level agent session with no watch label)\n' "$addr"
-    elif "${hcc[@]}" label "$addr" watch=on watch.nudges=0 watch.alerted= watch.handoff= lead=1 >/dev/null; then
+      printf 'practice-watch: %s: would watch it as the lead (a top-level agent session with no watch label of its own)\n' "$addr"
+    elif "${hcc[@]}" label "$addr" watch=on watch.nudges=0 watch.alerted= watch.handoff= lead=1 "watch.pid=$pid" >/dev/null; then
       printf 'practice-watch: %s: now watched and the lead (to opt out: hc label %s watch=off)\n' "$addr" "$addr"
     else
       printf 'practice-watch: %s: the watch label was not set; the next pass tries again\n' "$addr" >&2
@@ -297,7 +309,8 @@ case $cmd in
   on)
     (($# <= 1)) || usage
     t=$(terminal "${1-}")
-    "${hcc[@]}" label "$t" watch=on watch.nudges=0 watch.alerted= watch.handoff= lead=1 watch.old= >/dev/null
+    pid=$("${hcc[@]}" get "$t" --json | jq -r '.foreground.pid // "" | tostring') || pid=
+    "${hcc[@]}" label "$t" watch=on watch.nudges=0 watch.alerted= watch.handoff= lead=1 watch.old= "watch.pid=$pid" >/dev/null
     printf 'practice-watch: watching %s\n' "$t"
     ;;
   waits)

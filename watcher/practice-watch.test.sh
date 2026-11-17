@@ -49,6 +49,7 @@ ok() { # ok WHAT CONDITION...: count a case; report it when the condition fails
 }
 logged() { grep -q -- "$1" "$T/log" 2>/dev/null; }
 not_logged() { ! logged "$1"; }
+lacks() { ! grep -q -- "$1" "$2"; }
 alerts() { [[ $([[ -f $T/alerts ]] && wc -l <"$T/alerts" || echo 0) == "$1" ]]; }
 
 LS='{"terminals":[{"address":"t7"}]}'
@@ -157,7 +158,7 @@ ok "a dry run says what it would close" grep -q 't5: would close' "$T/out"
 
 # on, waits and off set the labels on the named terminal.
 watch on t7
-ok "on watches, resets the counts and marks the lead" logged '^label t7 watch=on watch.nudges=0 watch.alerted= watch.handoff= lead=1 watch.old=$'
+ok "on watches, resets the counts and marks the lead" logged '^label t7 watch=on watch.nudges=0 watch.alerted= watch.handoff= lead=1 watch.old= watch.pid=$'
 watch waits t7
 ok "waits stops the nudges" logged '^label t7 watch=waits$'
 watch off t7
@@ -165,35 +166,49 @@ ok "off sets watch=off, so a pass does not watch it again, and keeps the lead" l
 
 # A pass watches each live top-level agent session that has no watch label, as the lead. One that opted out (watch=off), a
 # worker (it has a parent), a plain shell and an old session are left alone.
-term() { jq -nc --arg a "$1" --arg p "$2" --arg prog "$3" --argjson l "$4" '{address:$a, state:"live", parent:(if $p == "" then null else $p end), foreground:{argv:[$prog, "--x"]}, status:{state:"working"}, labels:$l}'; }
-export STUB_LS_LIVE='{"terminals":[{"address":"a1"},{"address":"a2"},{"address":"a3"},{"address":"a4"},{"address":"a5"}]}'
-export STUB_GET_a1 STUB_GET_a2 STUB_GET_a3 STUB_GET_a4 STUB_GET_a5
+term() { jq -nc --arg a "$1" --arg p "$2" --arg prog "$3" --argjson l "$4" --arg pid "${5-}" '{address:$a, state:"live", parent:(if $p == "" then null else $p end), foreground:({argv:[$prog, "--x"]} + (if $pid == "" then {} else {pid:($pid | tonumber)} end)), status:{state:"working"}, labels:$l}'; }
+export STUB_LS_LIVE='{"terminals":[{"address":"a1"},{"address":"a2"},{"address":"a3"},{"address":"a4"},{"address":"a5"},{"address":"a6"},{"address":"a7"},{"address":"a8"}]}'
+export STUB_GET_a1 STUB_GET_a2 STUB_GET_a3 STUB_GET_a4 STUB_GET_a5 STUB_GET_a6 STUB_GET_a7 STUB_GET_a8
 STUB_GET_a1=$(term a1 "" /opt/claude/claude '{}')
 STUB_GET_a2=$(term a2 "" claude '{"watch":"off"}')
 STUB_GET_a3=$(term a3 t1 claude '{}')
 STUB_GET_a4=$(term a4 "" /usr/bin/bash '{}')
 STUB_GET_a5=$(term a5 "" codex '{"watch.old":"1"}')
+# The label belongs to the pane: an agent restarted there (a new pid) is not bound by the old session's watch=off.
+STUB_GET_a6=$(term a6 "" claude '{"watch":"off","watch.pid":"100"}' 200)
+STUB_GET_a7=$(term a7 "" claude '{"watch":"off","watch.pid":"200"}' 200)
+STUB_GET_a8=$(term a8 "" claude '{"watch":"waits"}' 300)
 STUB_GET=$(get live working 1) watch pass
 ok "a dry run says it would watch a new top-level session" grep -q 'a1: would watch it as the lead' "$T/out"
 ok "a dry run sets no label" not_logged '^label'
 STUB_GET=$(get live working 1) watch pass --apply
-ok "a new top-level agent session is watched as the lead" logged '^label a1 watch=on watch.nudges=0 watch.alerted= watch.handoff= lead=1$'
+ok "a new top-level agent session is watched as the lead" logged '^label a1 watch=on watch.nudges=0 watch.alerted= watch.handoff= lead=1 watch.pid=$'
 ok "an opted-out session, a worker, a shell and an old session are not" not_logged '^label a[2-5] '
-unset STUB_LS_LIVE STUB_GET_a1 STUB_GET_a2 STUB_GET_a3 STUB_GET_a4 STUB_GET_a5
+ok "an agent restarted in an opted-out pane is watched, with its own pid" logged '^label a6 watch=on watch.nudges=0 watch.alerted= watch.handoff= lead=1 watch.pid=200$'
+ok "the same agent that opted out stays out" not_logged '^label a7 '
+ok "a labelled pane with no pid gets the current one and keeps its label" logged '^label a8 watch.pid=300$'
+unset STUB_LS_LIVE STUB_GET_a1 STUB_GET_a2 STUB_GET_a3 STUB_GET_a4 STUB_GET_a5 STUB_GET_a6 STUB_GET_a7 STUB_GET_a8
 
-# watcherctl: a dry run writes nothing; install writes both units for this checkout; uninstall removes them.
+# watcherctl: a dry run writes nothing; install writes both units for the release export and refuses without it; uninstall removes them.
+mkdir -p "$T/runner/current/watcher"
+printf '#!/bin/bash\n' >"$T/runner/current/watcher/practice-watch"
+chmod +x "$T/runner/current/watcher/practice-watch"
 ctl() {
   rm -f "$T/log"
-  env PATH="$T/bin:$PATH" STUB_LOG="$T/log" WATCHER_UNIT_DIR="$T/units" "$DIR/watcherctl" "$@" >"$T/out" 2>&1
+  env PATH="$T/bin:$PATH" STUB_LOG="$T/log" WATCHER_UNIT_DIR="$T/units" WATCHER_RUNNER_HOME="${RUNNER:-$T/runner}" "$DIR/watcherctl" "$@" >"$T/out" 2>&1
 }
 ctl install
 ok "an install dry run writes nothing" test ! -e "$T/units"
 ok "an install dry run leaves linger alone" not_logged '^enable-linger'
 STUB_LINGER=yes ctl install --apply
 ok "install leaves linger alone when it is already on" not_logged '^enable-linger'
-ctl install --apply
-ok "install writes the service" grep -qF "ExecStart=$DIR/practice-watch pass --apply" "$T/units/practice-watch.service"
+ok "the service runs the release export" grep -qF "ExecStart=$T/runner/current/watcher/practice-watch pass --apply" "$T/units/practice-watch.service"
+ok "the service fetches and checks out nothing" lacks ExecStartPre "$T/units/practice-watch.service"
+RUNNER="$T/none" ctl install --apply && rc=0 || rc=$?
+ok "install refuses when the release export is missing, and names the install" grep -q 'no release export.*install.ts' "$T/out"
+ok "a refused install exits 1" test "$rc" = 1
 ok "install writes the timer" grep -q '^OnUnitActiveSec=5min$' "$T/units/practice-watch.timer"
+ctl install --apply
 ok "install turns on linger, so the watcher runs after logout" logged "^enable-linger ${USER:-$(id -un)}\$"
 ctl enable
 ok "enable starts the timer" logged '^--user enable --now practice-watch.timer$'

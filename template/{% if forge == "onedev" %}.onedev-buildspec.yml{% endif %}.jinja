@@ -466,6 +466,44 @@ jobs:
   timeout: 7200
 {%- endif %}
 
+{%- if versioned %}
+# Tag each release. On every push to {{ default_branch }}, tag v<version> when no such tag exists
+# (scripts/tag-release.sh). It never moves or replaces a tag, so a push that does not
+# change the version does nothing. It uses the same two job secrets as "Update
+# dependencies" below, ONEDEV_USER and ONEDEV_TOKEN: the account must be allowed to
+# push a tag.
+- name: Tag release
+  steps:
+  - !CheckoutStep
+    name: Checkout
+    cloneCredential: !DefaultCredential {}
+    withLfs: false
+    withSubmodules: false
+    condition: ALL_PREVIOUS_STEPS_WERE_SUCCESSFUL
+  - !CommandStep
+    name: Tag the version
+    runInContainer: true
+    image: {{ images['shell'] }}
+    interpreter: !DefaultInterpreter
+      commands: |
+        set -e
+{{- publish_setup() }}
+        scripts/tag-release.sh
+    envVars:
+    - name: ODEV_USER
+      value: '@secret:ONEDEV_USER@'
+    - name: ODEV_TOKEN
+      value: '@secret:ONEDEV_TOKEN@'
+    useTTY: false
+    condition: ALL_PREVIOUS_STEPS_WERE_SUCCESSFUL
+  triggers:
+  - !BranchUpdateTrigger
+    branches: {{ default_branch }}
+  retryCondition: never
+  maxRetries: 0
+  timeout: 600
+
+{%- endif %}
 # Weekly, on {{ ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'][weekly_day] }} at {{ '%02d:%02d' | format(weekly_hour, weekly_minute) }}: refresh dependencies within their ranges and open a PR. Needs two
 # job secrets on main, from an account that can push a branch and open a pull
 # request: ONEDEV_USER (its login) and ONEDEV_TOKEN (its access token). OneDev

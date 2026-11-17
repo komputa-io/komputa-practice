@@ -162,6 +162,13 @@ section_of() {
     *) ;;
   esac
 {%- endif %}
+{%- if versioned %}
+  # A version file also changes what the version check reads, and the shell section runs it.
+  case "$name" in
+    pyproject.toml | package.json | Cargo.toml | Directory.Build.props | *.csproj | VERSION | version-check.sh) printf 'shell\n' ;;
+    *) ;;
+  esac
+{%- endif %}
   case "$name" in
 {%- if 'python' in langs %}
     *.py | pyproject.toml | uv.lock | uv.toml | ruff.toml | pyrightconfig.json | pytest.toml)
@@ -800,6 +807,9 @@ if [[ -n "${want[shell]-}" ]]; then
       'Deslop nightly|cronExpression: 0 {{ nightly_minute }} {{ nightly_hour }} \* \* \?'
       'Secret scan nightly|cronExpression: 0 {{ nightly_minute }} {{ nightly_hour }} \* \* \?'
       'Secret scan nightly|scripts/trufflehog-scan\.sh'
+{%- if versioned %}
+      'Tag release|scripts/tag-release\.sh'
+{%- endif %}
       "Update dependencies|cronExpression: 0 {{ weekly_minute }} {{ weekly_hour }} \? \* {{ ['MON','TUE','WED','THU','FRI','SAT','SUN'][weekly_day] }}"
       # Later fixes depend on these gate-step lines. A template PR that adds a
       # scripts/gate.sh call to the spec adds its pattern here (a test holds it).
@@ -853,6 +863,9 @@ if [[ -n "${want[shell]-}" ]]; then
       "$flows/gate.yml|scripts/gate\.sh --(full|only shell)"
       "$flows/deslop-nightly.yml|cron: '{{ nightly_minute }} {{ nightly_hour }} \* \* \*'"
       "$flows/trufflehog-nightly.yml|cron: '{{ nightly_minute }} {{ nightly_hour }} \* \* \*'"
+{%- if versioned %}
+      "$flows/tag-release.yml|scripts/tag-release\.sh"
+{%- endif %}
       "$flows/update-deps.yml|cron: '{{ weekly_minute }} {{ weekly_hour }} \* \* {{ (weekly_day + 1) % 7 }}'"
     )
     for want in "${pattern[@]}"; do
@@ -871,6 +884,11 @@ if [[ -n "${want[shell]-}" ]]; then
         hits=$((hits + 1))
       fi
     done
+{%- endif %}
+{%- if versioned %}
+    # One semver version with one source (house-architecture, versioning).
+    # shellcheck disable=SC2310 # the status is the answer.
+    scripts/version-check.sh "${skip[@]}" || hits=$((hits + 1))
 {%- endif %}
     ((hits == 0)) || exit 1
   fi

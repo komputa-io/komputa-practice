@@ -1,0 +1,19 @@
+# Tags each release: on a push to {{ default_branch }}, creates v<version> when no such tag
+# exists (scripts/tag-release.sh). It never moves or replaces a tag.
+name: Tag release
+on:
+  push:
+    branches: [{{ default_branch }}]
+permissions:
+  contents: write
+jobs:
+  tag:
+    name: Tag release
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          scripts/tag-release.sh

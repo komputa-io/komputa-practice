@@ -8,8 +8,10 @@
 # install and uninstall are dry runs without --apply: they print what they would change and the command to apply.
 # install also turns on linger for this user (loginctl enable-linger), so user services and timers run after logout
 # and from boot: without it the watcher stops when the operator logs out, which is when it is needed.
-# The service runs this checkout's practice-watch, so a pull changes the watcher with no reinstall. Its settings
-# (WATCH_QUIET_MIN, WATCH_MAX_NUDGES, WATCH_ALERT_CMD) go in ~/.config/practice-watch.env, which is optional.
+# The service runs the release export (RUNNER_HOME/current/watcher/practice-watch, default ~/.sitrep-live/runner), the same
+# build that runs the runner and the herdr agent. A change reaches it by a deploy and then the install in app/scripts/install.ts,
+# which makes the export. install and status refuse when the export is missing. Its settings (WATCH_QUIET_MIN,
+# WATCH_MAX_NUDGES, WATCH_ALERT_CMD) go in ~/.config/practice-watch.env, which is optional.
 # Exit codes: 0 done; 1 an error; 2 misuse.
 set -Eeuo pipefail
 shopt -s inherit_errexit
@@ -25,6 +27,8 @@ usage() {
 
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 units=${WATCHER_UNIT_DIR:-$HOME/.config/systemd/user}
+runner=${WATCHER_RUNNER_HOME:-$HOME/.sitrep-live/runner}
+exported=$runner/current/watcher/practice-watch
 user=${USER:-$(id -un)}
 command -v systemctl >/dev/null || die "systemctl is missing: the watcher runs as a systemd user timer"
 
@@ -38,7 +42,7 @@ Description=practice-watch: one pass over the watched agent sessions
 Type=oneshot
 Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
 EnvironmentFile=-%h/.config/practice-watch.env
-ExecStart=$here/practice-watch pass --apply
+ExecStart=$exported pass --apply
 TimeoutStartSec=15min
 EOF
 }
@@ -58,6 +62,10 @@ WantedBy=timers.target
 EOF
 }
 
+need_export() {
+  [[ -x $exported ]] || die "no release export at $exported: from app/, run: node node_modules/tsx/dist/cli.mjs scripts/install.ts --analysis --url <hub url> --token-stdin --apply (see CLAUDE.md, Deploying Sitrep Live)"
+}
+
 apply_flag() { # apply_flag ARGS...: 1 for --apply, 0 for none
   case ${1-} in
     "") printf 0 ;;
@@ -72,9 +80,10 @@ case $cmd in
   install)
     (($# <= 1)) || usage
     apply=$(apply_flag "${1-}")
+    need_export
     linger=$(loginctl show-user "$user" --property=Linger --value 2>/dev/null || true)
     if ((! apply)); then
-      printf 'watcherctl: would write %s/practice-watch.service (runs %s/practice-watch pass --apply)\n' "$units" "$here"
+      printf 'watcherctl: would write %s/practice-watch.service (runs %s pass --apply)\n' "$units" "$exported"
       printf 'watcherctl: would write %s/practice-watch.timer (every 5 minutes)\n' "$units"
       [[ $linger == yes ]] || printf 'watcherctl: would run loginctl enable-linger %s (user services keep running after logout)\n' "$user"
       printf 'watcherctl: dry run; to apply: %s/watcherctl install --apply, then watcherctl enable\n' "$here"
@@ -125,7 +134,8 @@ case $cmd in
     (($# == 0)) || usage
     systemctl --user list-timers --all --no-pager practice-watch.timer || true
     journalctl --user -u practice-watch.service -n 10 --no-pager -o cat 2>/dev/null || true
-    "$here/practice-watch" status
+    need_export
+    "$exported" status
     ;;
   *) usage ;;
 esac

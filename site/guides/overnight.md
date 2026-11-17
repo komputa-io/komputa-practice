@@ -15,7 +15,7 @@ Use this guide when a session must keep working while nobody watches it, for exa
 
 ## Steps
 
-1. **Install the timer once.** From the practice clone:
+1. **Install the timer once.** It runs the watcher from the release export, so run the Sitrep Live workstation install first (see [Running services](/explanation/running-services)). Then, from the practice clone:
 
    ```sh
    cd ~/Code/komputa-practice

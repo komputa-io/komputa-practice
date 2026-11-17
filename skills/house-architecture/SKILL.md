@@ -139,7 +139,7 @@ Read the reference before you apply a rule in depth.
   removal is already an issue.
 - Measure before you optimise. A performance claim states before and after.
 - Every project has one semver version, tagged per release and visible at run
-  time.
+  time. The gate checks the one source; a CI job makes the tag.
 - Comments only for a trap, a dated measurement, a reversal or an upstream
   constraint. No tracker IDs in code.
 - Dependencies: ranges up to the next major, a committed lock file refreshed

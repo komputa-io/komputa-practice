@@ -78,7 +78,9 @@ the old one.
 
 - **Every project has one semver version** for its whole life: one source of
   truth in the repo, a git tag per release, and visible at run time (a UI footer
-  or about page, `--version`, `/version` or a field in `/health`).
+  or about page, `--version`, `/version` or a field in `/health`). The gate's
+  `scripts/version-check.sh` holds the first part and the tag job holds the
+  second; the template's reference page "Versioning" says how.
 - **A published package** gets a version bump with every change to its source.
   CI refuses a source change without one.
 - **A CLI extends only within a major version**: commands, flags, JSON fields

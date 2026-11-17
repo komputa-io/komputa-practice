@@ -31,6 +31,7 @@ _skip_if_exists:
   - scripts/deslop.pin
   - scripts/security.pin
   - scripts/trivy.pin
+  - VERSION
 _tasks:
   # A new project gets a git repo; an existing one keeps its own.
   - command: git rev-parse --git-dir >/dev/null 2>&1 || git init -q -b {{ default_branch }}
@@ -269,6 +270,14 @@ shell_exclude:
     list, for example [.ralph, archive]
   default: []
   validator: "{% if shell_exclude is string %}Give a list, for example [.ralph, archive].{% else %}{% for d in shell_exclude %}{% if loop.first and (shell_exclude | reject('string') | list) %}Give folder names as text.{% elif d is string and (not (d | regex_search('^[A-Za-z0-9_.][A-Za-z0-9_.-]*(/[A-Za-z0-9_.][A-Za-z0-9_.-]*)*$')) or '..' in d) %}{{ d }} is not a folder under the repo root. {% endif %}{% endfor %}{% endif %}"
+
+versioned:
+  type: bool
+  help: >-
+    Does the repo ship software with a version? The gate then holds one semver
+    version with one source, and CI tags each release. Answer no for a repo of
+    content only (notes, docs, a collection of scripts that nobody installs).
+  default: true
 
 gate_budget_reason:
   type: str

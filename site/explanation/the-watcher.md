@@ -10,6 +10,14 @@ every 5 minutes by a systemd user timer. `watcherctl install` turns on linger
 for your user, because without it systemd stops a user's timers at logout,
 which is when the watcher is needed.
 
+The timer runs the watcher from the release export,
+`~/.sitrep-live/runner/current/watcher/practice-watch`, like every other
+service the practice runs on your workstation. A change reaches it by a deploy
+and then the install, not by a merge to main. `watcherctl install` refuses when
+the export is missing. [Running services](/explanation/running-services) gives
+the rule and the reason: on 17 Nov 2026 the timer ran from the working
+checkout, which sat detached at an old commit, so a merged fix did not run.
+
 There is one watcher, and it stays one. When we need to watch for another
 event, it becomes one more case in the same pass, not a second script or a
 second timer.
@@ -32,6 +40,14 @@ has no `watch` label on the watch and marks it the lead (`watch=on`,
 
 To opt a session out, run `practice-watch off` for it, or
 `hc label <terminal> watch=off`.
+
+An opt-out lasts for that agent only. The labels belong to the hc terminal,
+not to the agent, so the watcher records the agent's process id in
+`watch.pid`. When you restart the agent in the same pane, the new process
+has a new id. The old session's `watch=off` or `watch=waits` then does not
+bind it, and the next pass puts it on the watch. On 17 Nov 2026 a restarted
+session kept the parked session's `watch=off` and ran unwatched all
+afternoon.
 
 ## What one pass does
 

@@ -10,5 +10,6 @@ Use these pages to look something up. Each page except the rules is generated fr
 - [Skills](/reference/skills): every skill, and when an agent uses it.
 - [Template questions](/reference/template-questions): every question that `copier copy` asks.
 - [Lead-only rules](/reference/lead-rules): the extra rules for a lead that starts workers.
+- [Versioning](/reference/versioning): the one-version rule, what the gate refuses, and how a release tag is made.
 - [Repo layout](/reference/repo-layout): what each folder and file of the repo holds.
 - [Changes](/reference/changes): every pull request merged into the practice, under the version it shipped in.

@@ -94,6 +94,8 @@ COMMON_FILES = [
     "scripts/deslop.pin",
     "scripts/trufflehog-scan.sh",
     "scripts/trufflehog-issues.sh",
+    "scripts/version-check.sh",
+    "scripts/tag-release.sh",
     ".deslop.toml",
     ".secrets.baseline",
 ]
@@ -112,6 +114,7 @@ FORGE_FILES = {
         ".github/workflows/deslop-nightly.yml",
         ".github/workflows/trufflehog-nightly.yml",
         ".github/workflows/update-deps.yml",
+        ".github/workflows/tag-release.yml",
         "scripts/forge/github.sh",
     ],
 }
@@ -181,6 +184,8 @@ def test_rendered_scripts_pass_shellcheck_and_shfmt(tmp_path, name):
         out / "scripts/deslop-issues.sh",
         out / "scripts/trufflehog-scan.sh",
         out / "scripts/trufflehog-issues.sh",
+        out / "scripts/version-check.sh",
+        out / "scripts/tag-release.sh",
         out / ".githooks/pre-commit",
         *out.glob("scripts/security-*.sh"),
         *out.glob("scripts/install-cargo-deny.sh"),
@@ -3181,3 +3186,123 @@ def test_the_pinned_trivy_is_not_a_compromised_release(tmp_path):
         ["bash", str(out / "scripts/update-deps.sh"), "--help"], capture_output=True, text=True
     )
     assert "trivy" in refresh.stderr
+
+
+# The version check and the release tag.
+SCRIPTS = TEMPLATE / "template/scripts"
+PYPROJECT = '[project]\nname = "x"\nversion = "{}"\n'
+
+
+def _versioned(tmp_path: Path, files: dict[str, str]) -> Path:
+    repo = tmp_path / "repo"
+    for name, text in files.items():
+        (repo / name).parent.mkdir(parents=True, exist_ok=True)
+        (repo / name).write_text(text)
+    git(repo, "init", "-q")
+    git(repo, "add", "-A")
+    return repo
+
+
+def _check(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [str(SCRIPTS / "version-check.sh"), *args], cwd=repo, capture_output=True, text=True
+    )
+
+
+@pytest.mark.parametrize(
+    ("files", "ok", "message"),
+    [
+        ({"pyproject.toml": PYPROJECT.format("1.2.3")}, True, "1.2.3"),
+        (
+            {"pyproject.toml": PYPROJECT.format("1.2.3"), "VERSION": "1.2.3\n"},
+            True,
+            "2 declaration(s)",
+        ),
+        (  # derived copies: dynamic, workspace and importlib.metadata are no declaration
+            {
+                "pyproject.toml": '[project]\nname = "x"\ndynamic = ["version"]\n',
+                "Cargo.toml": '[workspace.package]\nversion = "0.4.0-rc.1"\n',
+                "m/Cargo.toml": '[package]\nname = "m"\nversion.workspace = true\n',
+                "pkg/__init__.py": "from importlib.metadata import version\n__version__ = version('x')\n",
+                "web/package.json": '{\n  "private": true,\n  "dependencies": {"version": "9.9.9"}\n}\n',
+            },
+            True,
+            "0.4.0-rc.1",
+        ),
+        (
+            {
+                "pyproject.toml": PYPROJECT.format("1.0.1"),
+                "pkg/__init__.py": '__version__ = "1.1.0"\n',
+            },
+            False,
+            "pkg/__init__.py holds a literal __version__",
+        ),
+        (
+            {
+                "pyproject.toml": PYPROJECT.format("1.0.1"),
+                "package.json": '{\n  "version": "1.1.0"\n}\n',
+            },
+            False,
+            "package.json=1.1.0, pyproject.toml=1.0.1",
+        ),
+        ({"pyproject.toml": PYPROJECT.format("1.0")}, False, "'1.0' is not semver"),
+        ({"README.md": "hello\n"}, False, "no version declared"),
+    ],
+)
+def test_the_version_check_holds_one_semver_version(tmp_path, files, ok, message):
+    run = _check(_versioned(tmp_path, files))
+    assert (run.returncode == 0) == ok, run.stdout + run.stderr
+    assert message in run.stdout + run.stderr
+
+
+def test_the_gate_runs_the_version_check_unless_the_repo_opts_out(tmp_path):
+    out = render(tmp_path / "p", ["shell"])
+    _repo(out)
+    assert (out / "VERSION").read_text() == "0.1.0\n"
+    (out / "pyproject.toml").write_text(PYPROJECT.format("0.2.0"))
+    git(out, "add", "-A")
+    gate = run_gate(out, "--only", "shell")
+    assert (
+        gate.returncode == 1 and "VERSION=0.1.0, pyproject.toml=0.2.0" in gate.stderr + gate.stdout
+    )
+    off = render(tmp_path / "off", ["shell"], versioned=False)
+    assert (
+        not (off / "VERSION").exists()
+        and "version-check" not in (off / "scripts/gate.sh").read_text()
+    )
+
+
+def _tagged_repo(tmp_path: Path, version: str) -> tuple[Path, Path]:
+    remote = tmp_path / "remote.git"
+    git(tmp_path, "init", "-q", "--bare", str(remote))
+    repo = _versioned(tmp_path, {"VERSION": version + "\n"})
+    git(repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "one")
+    git(repo, "remote", "add", "origin", str(remote))
+    for k, v in (("user.name", "t"), ("user.email", "t@t")):
+        git(repo, "config", k, v)
+    return repo, remote
+
+
+def _tag(repo: Path) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [str(SCRIPTS / "tag-release.sh")], cwd=repo, capture_output=True, text=True
+    )
+
+
+def test_the_release_tag_is_made_once_and_an_existing_tag_never_moves(tmp_path):
+    repo, remote = _tagged_repo(tmp_path, "1.0.0")
+    assert _tag(repo).returncode == 0
+    first = git(remote, "rev-parse", "v1.0.0^{commit}")
+    assert first == git(repo, "rev-parse", "HEAD")
+    # The same version on a new commit: the tag stays where it is.
+    (repo / "note.txt").write_text("more\n")
+    git(repo, "add", "-A")
+    git(repo, "commit", "-qm", "two")
+    again = _tag(repo)
+    assert again.returncode == 0 and "Left alone" in again.stdout
+    assert git(remote, "rev-parse", "v1.0.0^{commit}") == first
+    # A bump makes a new tag.
+    (repo / "VERSION").write_text("1.1.0\n")
+    git(repo, "commit", "-qam", "bump")
+    assert _tag(repo).returncode == 0
+    assert git(remote, "rev-parse", "v1.1.0^{commit}") == git(repo, "rev-parse", "HEAD")
