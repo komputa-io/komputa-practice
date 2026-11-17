@@ -12,8 +12,7 @@ GitHub project.
 1. **Pick the candidate.** It is a commit on `origin/main`. Everything for the release is merged.
 2. **Move each canary to the candidate.** In each canary, from a fresh clone, on a branch `chore/template-<version>`:
    `uvx --exclude-newer "7 days" copier update --vcs-ref <sha> --trust --defaults`, with the project's own answers.
-   Then the by-hand steps for a seeded file the release changes (OneDev's `.onedev-buildspec.yml`; copier does not
-   touch it). Open the PR, pass its CI, merge it. Each canary's default branch now records the candidate in
+   Open the PR, pass its CI, merge it. Each canary's default branch now records the candidate in
    `.copier-answers.yml`.
 3. **Run the canary.** In the template clone, `ODEV_HOST=<OneDev URL> scripts/canary.sh <sha>` is a dry run: it lists
    the jobs. It refuses when a canary records another `_commit`. Then `scripts/canary.sh --apply <sha>` runs each job
@@ -29,7 +28,7 @@ A bare `git tag` skips the canary check. Use `scripts/release.sh`.
 
 ## Rollout
 
-The operator says when to roll out and to which projects. One lead starts the workers; each worker owns a few projects
+The operator says when to roll out and to which projects. One lead starts the workers, in new tabs (the `herdr` skill, "Show it"); each worker owns a few projects
 and the work is tier 1 for each project. The per-release items (what changed, which files, which by-hand lines) go in
 the release's own brief. These rules hold for every release.
 
@@ -42,9 +41,18 @@ For each project, in the list's order:
 3. `uvx --exclude-newer "7 days" copier update --vcs-ref <version> --trust --defaults`, with the answers the project
    records in `.copier-answers.yml`. Never invent an answer. When one is missing, skip the project and say why. Keep the
    project's own code and the template's gate when a conflict arises.
-4. **OneDev only, by hand.** Render a fresh copy of the release with the project's answers into a temp folder and copy
-   the changed build-spec lines exactly as rendered (a schedule line keeps the project's slot). Change no other job. Run
+4. **The CI file.** Copier merges the release into `.onedev-buildspec.yml` or `.github/workflows/gate.yml` and keeps
+   the jobs the project added. Resolve each conflict it marks: the template's lines in the template's jobs, the
+   project's lines in its own jobs. Then run `git diff --check`, which names each conflict marker left behind, and
+   parse the file with `python3 -c 'import sys,yaml; yaml.compose(open(sys.argv[1]))' <file>` (`compose` accepts
+   OneDev's `!` tags). `odev buildspec check` passes a file that still has conflict markers. On OneDev, also run
    `odev buildspec check` before the commit.
+   **Once, on the first update past v1.15.0:** before that release the CI file was seeded once, so most projects lack
+   template changes that were never copied by hand. Render a fresh copy of the release with the project's answers into
+   a temp folder, and replace each template job in the project's file with the job as rendered. Put the template's
+   jobs first, in the order of the render, and the project's own jobs after them. Copier merges by position, so a
+   project job between template jobs takes a later template change into the wrong job. Keep every job the project
+   added, and keep its deploy steps.
 5. `CI=1 scripts/gate.sh --full`. The drift check names each seeded build-spec line the project lacks: add it as the
    fresh render has it.
 6. When the gate fails only on Trivy findings in lock files, do not upgrade packages in this PR. File one

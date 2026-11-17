@@ -46,6 +46,12 @@ Then check delivery. The first message can be dropped. It happened once in four 
 
 Give the worker your own `herdr.space` and `herdr.tab` labels, so its pane opens in your space and tab, whatever the operator is looking at. Pass no label when you have none, and never the word `null`: a plain `jq -r '.labels["herdr.space"]'` prints `null` for a missing label, and Herdr takes that as a space id. Say in one line what you opened. Do not use `herdr-app do terminal.keep` to show a worker: it has no space or tab argument, so it puts the pane beside whatever the operator has focused, which can be another space.
 
+One or two workers go in your tab. Three or more (a rollout, a fan-out) go in new tabs of your space, at most three in each, so that no pane gets too small. Start the first of each group with only your `herdr.space` label: Herdr then makes a tab for it. Read that tab's id, and give it with your `herdr.space` label to the next two:
+
+```sh
+herdr-app ls | jq -r --arg t <first worker> '.spaces[].tabs[] | select(any(.terminals[]; .terminal == $t)) | .id'
+```
+
 To move a worker that opened in the wrong space, park it with `herdr-app do terminal.park --terminal <t>`, then put your labels on it with `hc label`. It keeps running throughout. Relabelling without parking does not move the pane.
 
 ## Report contract

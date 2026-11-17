@@ -1,10 +1,19 @@
 #!/usr/bin/env bash
-# Holds a pull request until each duplicate that it adds has a decision.
+# Holds a pull request until each copy that it adds has a decision.
 #   scripts/deslop-decisions.sh --report FILE [--decisions FILE]
-# Reads the Deslop JSON report from scripts/deslop-pr.sh. Each cluster that the
-# diff touches needs a decision. Fix it, and the next scan no longer finds it.
-# Or keep it with one line in the decisions file (default .deslop-decisions):
-#   <cluster id> keep <reason>
+# Reads the Deslop JSON report from scripts/deslop-pr.sh. A cluster needs a
+# decision when the diff touches it, it is identical or nearly identical, and one
+# of its new lines is outside test code (scripts/deslop-gate.jq). Fix it, and the
+# next scan no longer finds it. Or keep it with one line in the decisions file
+# (default .deslop-decisions):
+#   <cluster id> keep <reason> <why, in words>
+# where <reason> is one of:
+#   shape       the copies share a shape and no logic: declarations, one table
+#               row per line, one mapping call per column.
+#   boundary    the copies sit on two sides of a boundary that must not share
+#               code; the words name it.
+#   issue:REF   sharing them is real work, tracked by the issue REF (#12,
+#               group/project#12 or a URL).
 # Blank lines and lines that start with # are skipped. A cluster that a later
 # edit changes gets a new id, so it needs a new decision.
 # Exit 0: every cluster has a decision. 3: a cluster has none (each is named).
@@ -41,14 +50,15 @@ if [[ -f "$decisions" ]]; then
   while IFS= read -r line || [[ -n "$line" ]]; do
     n=$((n + 1))
     [[ "$line" =~ ^[[:space:]]*(#|$) ]] && continue
-    [[ "$line" =~ ^([^[:space:]]+)[[:space:]]+keep[[:space:]]+[^[:space:]] ]] \
-      || die "$decisions line $n is not '<cluster id> keep <reason>': $line"
+    [[ "$line" =~ ^([^[:space:]]+)[[:space:]]+keep[[:space:]]+(shape|boundary|issue:[^[:space:]]+)[[:space:]]+[^[:space:]] ]] \
+      || die "$decisions line $n is not '<cluster id> keep <shape|boundary|issue:REF> <why>': $line"
     kept[${BASH_REMATCH[1]}]=1
   done <"$decisions"
 fi
 
-# One line for each cluster that the diff touches: id, kind, its new lines.
-clusters=$(jq -r '.clusters[] | select(.intersects_diff)
+# One line for each cluster that needs a decision: id, kind, its new lines.
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+clusters=$(jq -L "$here" -r 'include "deslop-gate"; .clusters[] | select(needs_decision)
   | [.id, (.kind | gsub("_"; " ")),
      ([.occurrences[] | select(.in_diff) | "\(.path):\(.start_line)-\(.end_line)"] | join(", "))]
   | @tsv' "$report") || die "cannot read the clusters in $report"
@@ -61,12 +71,17 @@ while IFS=$'\t' read -r id kind where; do
 done <<<"$clusters"
 
 if ((${#open[@]} == 0)); then
-  printf 'deslop-decisions: each of the %d duplicates this PR adds has a decision\n' "$total"
+  if ((total == 0)); then
+    printf 'deslop-decisions: no copy this PR adds needs a decision\n'
+  else
+    printf 'deslop-decisions: each of the %d copies this PR adds has a decision\n' "$total"
+  fi
   exit 0
 fi
 {
-  printf 'deslop-decisions: %d of the %d duplicates this PR adds have no decision:\n' "${#open[@]}" "$total"
+  printf 'deslop-decisions: %d of the %d copies this PR adds have no decision:\n' "${#open[@]}" "$total"
   printf '  %s\n' "${open[@]}"
-  printf 'Fix each one, or keep it with a line "<cluster id> keep <reason>" in %s, then push.\n' "$decisions"
+  printf 'Fix each one, or keep it with a line "<cluster id> keep <shape|boundary|issue:REF> <why>" in %s, then push.\n' "$decisions"
+  printf 'The reasons are listed at the top of scripts/deslop-decisions.sh.\n'
 } >&2
 exit 3

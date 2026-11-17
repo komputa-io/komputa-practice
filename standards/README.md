@@ -23,8 +23,9 @@ Run the template's tests from this folder: `uv run --locked pytest -n auto`.
 
 Copier runs through `uvx` with the seven-day cooldown, never a global install.
 
-`.onedev-buildspec.yml` is seeded once, so `copier update` does not change it.
-A repo whose weekly "Update dependencies" job still has a "Build odev" step must
+`copier update` merges each release into `.onedev-buildspec.yml` and
+`.github/workflows/gate.yml`, and keeps the jobs a project adds below the
+template's. A repo whose weekly "Update dependencies" job still has a "Build odev" step must
 delete that step by hand and drop `PATH="$PWD/.git/bin:$PATH"` from its export
 line. `scripts/update-deps.sh` opens the PR through `scripts/forge/<forge>.sh`.
 
@@ -36,10 +37,8 @@ job (daily, three hours after the weekly refresh, on the default branch, with th
 `ONEDEV_TOKEN`) merges it with a merge commit only while the merge preview that CI
 passed is built on the branch tip, then deletes the branch. GitHub: `gh pr merge --auto`
 after the job starts the gate on the branch with
-`workflow_dispatch` (a PR opened with the job token starts no workflow; `gate.yml`
-is seeded once, so an older repo adds that trigger by hand, and the repo needs
-"Allow auto-merge" on). `.onedev-buildspec.yml` is seeded once, so an older OneDev repo adds the
-"Merge dependency update" job by hand. Any other change waits for a person.
+`workflow_dispatch` (a PR opened with the job token starts no workflow; the repo
+needs "Allow auto-merge" on). Any other change waits for a person.
 
 The `forge` answer (`onedev` or `github`, from the environment file) picks the
 CI file (`.onedev-buildspec.yml` or `.github/workflows/gate.yml`), the PR
@@ -49,8 +48,7 @@ only: a GitHub repo runs `scripts/update-deps.sh` by hand.
 ## What it writes
 
 Seeded once, then the repo's own: `CLAUDE.md`, `CONTEXT.md`, `README.md`,
-`docs/adr/README.md`, `.gitignore`, `.onedev-buildspec.yml`,
-`.github/workflows/gate.yml`, `global.json`,
+`docs/adr/README.md`, `.gitignore`, `global.json`,
 `Directory.Packages.props`, `.config/dotnet-tools.json`, `tsconfig.json`,
 `next.config.ts`, `pyproject.toml`, `.secrets.baseline`.
 
@@ -139,9 +137,7 @@ the shell job. It fails on HIGH and CRITICAL findings that have a fix.
 which the gate checks. `scripts/install-trivy.sh` installs the release in
 `scripts/trivy.pin` by its sha256 (never v0.69.4 to v0.69.6, the compromised
 releases), and the weekly job moves the pin to a release at least seven days old
-after a cosign (sigstore) check of its checksums file. A repo whose
-`.onedev-buildspec.yml` or `update-deps.yml` is already seeded adds `--only trivy` to
-the "Refresh image pins" step by hand. `--fast` skips the scan: the binary and the
+after a cosign (sigstore) check of its checksums file. `--fast` skips the scan: the binary and the
 vulnerability database take longer than its 5 s budget. Rust keeps `cargo deny`.
 
 Rust is a language answer beside Python, .NET and TypeScript. Its section runs

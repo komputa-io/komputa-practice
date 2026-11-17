@@ -63,11 +63,28 @@ Change them in the project template (komputa-practice).
   another forge). The default branch (`{{ default_branch }}`), `main`, `master`, bot branches (`dependabot/`, `renovate/`) and a detached checkout
   pass. Rename a branch with `git branch -m <kind>/<name>`.
 - No hook runs on push. CI runs the full gate on the pull request.
-- The build spec is seeded once and then belongs to the repo, so `copier update`
-  never changes it. `scripts/gate.sh --full` checks it for the lines that the
+- `copier update` merges each template release into the build spec and keeps the
+  jobs this repo adds below the template's. Leave the template's own jobs as they
+  are: a local edit to one of them can conflict on the next update.
+  `scripts/gate.sh --full` checks it for the lines that the
   template's gate depends on (the Deslop, secret scan and dependency jobs, the target-branch
   fetch and `CI=true` in the gate steps, and the trust jobs when `trust_green_ci`
   is on) and names each one that is missing. Copy the line from the template.
+
+## The duplicate check
+
+- The job "Duplicate code" runs Deslop on the pull request's diff (`scripts/deslop-pr.sh`) and
+  comments with each copy that needs a decision (`scripts/deslop-comment.sh`).
+- A copy needs a decision when the diff touches it, it is identical or nearly identical, and one of
+  its new lines is outside test code (`scripts/deslop-gate.jq`). Looser and test-only matches need
+  none; the comment counts them.
+- Fix it: share the code, or call what already exists. Keep it only with one line in
+  `.deslop-decisions`: `<cluster id> keep <shape|boundary|issue:REF> <why>`. The reasons are at the
+  top of `scripts/deslop-decisions.sh`. A cluster that a later edit changes gets a new id and needs
+  a new decision.
+- A second model (`scripts/deslop-review.sh`) reads each `shape` or `boundary` keep with both
+  copies, and fails the check when it says the copies should be shared. Fix the copy, or keep it as
+  `issue:REF` with an issue that tracks the work. It needs the secret `DESLOP_REVIEW_KEY`.
 
 ## The nightly secret scan
 

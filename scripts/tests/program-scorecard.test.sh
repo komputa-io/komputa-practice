@@ -21,6 +21,8 @@ printf '_commit: v1.1.0\n' >"$T/repo/.copier-answers.yml"
 put src/a.cs 1
 g add -A && g commit -qm "start"
 g switch -qc fix-1 && put src/a.cs 3 && put tests/a.test.cs 4 && g add -A && g commit -qm "fix a"
+printf '# Deslop decisions\nc1 keep shape two tables\nc2 keep issue:#4 share later\n' >"$T/repo/.deslop-decisions"
+g add -A && g commit -qm "keep two"
 g switch -q main && g merge -q --no-ff fix-1 -m "Merge pull request #1 from owner/fix-1"
 put src/b.cs 10 && put tests/b.test.cs 5 && g add -A && g commit -qm "feat(b): add b (#2)"
 printf '_commit: v1.2.0\n' >"$T/repo/.copier-answers.yml" && g commit -qam "Template update to v1.2.0"
@@ -38,6 +40,7 @@ ok() { # ok WHAT PATTERN: the scorecard's output matches PATTERN
 ok "a merge and two squash merges are three pull requests" '^3 pull requests merged'
 ok "a feat squash merge is a build" '^build +1 +10 +5 '
 ok "a fix branch and a fix squash merge are fixes" '^fix +2 +4 +4 '
+ok "the keep lines a merge adds are counted" '^Deslop keeps: 2 added, 0 removed$'
 ok "a commit with no pull request is not counted" '^other +0 '
 ok "each pull request names its practice version" 'v1\.1\.0 for 2 pull requests, v1\.2\.0 for 1 pull request$'
 ok "lead time counts the merge commit only" 'to its merge: [0-9.]+$'

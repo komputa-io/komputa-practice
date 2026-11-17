@@ -39,7 +39,8 @@
 # CI runs the gate on every pull request into {{ default_branch }} and on every push to {{ default_branch }}.
 # It has no build or deploy step. {% if private_index or nuget_feed %}Its only secrets are the read-only logins
 # for the private package {% if private_index and nuget_feed %}index and feed{% elif private_index %}index{% else %}feed{% endif %}.{% else %}It asks for no secret.{% endif %} Add deploy jobs
-# below it; this file is seeded once and then belongs to the repo.
+# below the template's. `copier update` merges each template release into this
+# file and keeps the jobs you add; leave the template's own jobs as they are.
 name: gate
 
 on:
@@ -136,3 +137,9 @@ jobs:
         env:
           GH_TOKEN: {% raw %}${{ github.token }}{% endraw %}
       - run: scripts/deslop-decisions.sh --report .deslop-pr/deslop-report.json
+      # A second model checks each shape or boundary keep. Set the repo secret
+      # DESLOP_REVIEW_KEY (an OpenAI API key with a spend cap); without it the
+      # step warns and passes.
+      - run: scripts/deslop-review.sh --report .deslop-pr/deslop-report.json
+        env:
+          DESLOP_REVIEW_KEY: {% raw %}${{ secrets.DESLOP_REVIEW_KEY }}{% endraw %}

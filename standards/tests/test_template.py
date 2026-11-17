@@ -6,6 +6,8 @@ scripts go through shellcheck and shfmt here too.
 
 from __future__ import annotations
 
+import atexit
+import functools
 import hashlib
 import json
 import os
@@ -13,6 +15,7 @@ import re
 import shutil
 import tomllib
 import subprocess
+import tempfile
 import time
 import xml.etree.ElementTree as ET
 from datetime import UTC, datetime
@@ -20,7 +23,7 @@ from pathlib import Path
 
 import pytest
 import yaml
-from copier import run_copy
+from copier import run_copy, run_update
 
 # The repo root, where copier.yml is: the template's own tests live in standards/.
 TEMPLATE = Path(__file__).resolve().parent.parent.parent
@@ -90,6 +93,8 @@ COMMON_FILES = [
     "scripts/deslop-pr.sh",
     "scripts/deslop-comment.sh",
     "scripts/deslop-decisions.sh",
+    "scripts/deslop-review.sh",
+    "scripts/deslop-gate.jq",
     "scripts/deslop-issues.sh",
     "scripts/deslop.pin",
     "scripts/trufflehog-scan.sh",
@@ -170,6 +175,9 @@ def test_each_combination_has_the_common_files_and_only_its_own_bundles(tmp_path
         folder = out / str(EXTRA.get(name, {}).get(BUNDLE_DIR[bundle], "."))
         for f in files:
             assert (folder / f).exists() == (bundle in COMBOS[name]), (bundle, f)
+    # git diff --check after a copier merge (docs/release.md) must name only real faults.
+    spec = (out / ".onedev-buildspec.yml").read_text().splitlines()
+    assert [n for n, line in enumerate(spec, 1) if line != line.rstrip()] == []
 
 
 @pytest.mark.parametrize("name", COMBOS)
@@ -181,6 +189,7 @@ def test_rendered_scripts_pass_shellcheck_and_shfmt(tmp_path, name):
         out / "scripts/deslop-pr.sh",
         out / "scripts/deslop-comment.sh",
         out / "scripts/deslop-decisions.sh",
+        out / "scripts/deslop-review.sh",
         out / "scripts/deslop-issues.sh",
         out / "scripts/trufflehog-scan.sh",
         out / "scripts/trufflehog-issues.sh",
@@ -2140,7 +2149,16 @@ def test_a_bad_test_folder_answer_is_refused(tmp_path):
 
 # --- The Deslop PR check
 
-DESLOP_SCRIPTS = TEMPLATE / "template/scripts"
+
+@functools.cache
+def deslop_scripts() -> Path:
+    """The Deslop scripts of one rendered project (test_folders e2e and qa/specs)."""
+    root = tempfile.mkdtemp()
+    atexit.register(shutil.rmtree, root, True)
+    out = Path(root) / "p"
+    return render(out, ["shell"], test_folders=["e2e", "qa/specs"]) / "scripts"
+
+
 CLUSTER = {
     "id": "c1a2",
     "kind": "nearly_identical",
@@ -2182,7 +2200,10 @@ def _comment(
         "GITHUB_REPOSITORY": "o/r",
     }
     done = subprocess.run(
-        [str(DESLOP_SCRIPTS / "deslop-comment.sh"), *args], capture_output=True, text=True, env=env
+        [str(deslop_scripts() / "deslop-comment.sh"), *args],
+        capture_output=True,
+        text=True,
+        env=env,
     )
     assert "s3cret-token" not in done.stdout + done.stderr
     return done, log.read_text() if log.exists() else ""
@@ -2192,13 +2213,16 @@ def test_the_comment_names_each_duplicate_and_where_its_twin_is(tmp_path):
     done, _ = _comment(tmp_path, "--report", str(_report(tmp_path, [CLUSTER])))
     assert done.returncode == 0, done.stderr
     assert done.stdout.startswith(
-        "<!-- deslop-pr -->\n**Deslop:** This PR adds 1 duplicate (12.3% of its added lines)."
+        "<!-- deslop-pr -->\n**Deslop:** This PR adds 1 copy (12.3% of its added lines are duplicated)."
     )
     assert (
         "1. **nearly identical** `c1a2`: new `new.ts:1-9`; existing copy `old.ts:5-13`"
         in done.stdout
     )
-    assert "keep it with a line `<cluster id> keep <reason>` in `.deslop-decisions`" in done.stdout
+    assert (
+        "Keep one only with a line `<cluster id> keep <shape|boundary|issue:REF> <why>` in `.deslop-decisions`"
+        in done.stdout
+    )
     assert "dry run" in done.stdout
 
 
@@ -2218,13 +2242,17 @@ def test_with_no_duplicates_it_updates_an_old_comment_but_posts_no_new_one(tmp_p
     _, log = _comment(tmp_path, *args)
     assert log == ""
     _, log = _comment(tmp_path / "old", *args, gh_list="42")
-    assert "No new duplicates." in log
+    assert "No new copies." in log
 
 
 def _decisions(tmp_path: Path, clusters: list[dict], kept: str) -> subprocess.CompletedProcess[str]:
     (tmp_path / ".deslop-decisions").write_text(kept)
     return subprocess.run(
-        [str(DESLOP_SCRIPTS / "deslop-decisions.sh"), "--report", str(_report(tmp_path, clusters))],
+        [
+            str(deslop_scripts() / "deslop-decisions.sh"),
+            "--report",
+            str(_report(tmp_path, clusters)),
+        ],
         cwd=tmp_path,
         capture_output=True,
         text=True,
@@ -2237,16 +2265,134 @@ def test_a_duplicate_the_pr_adds_holds_the_merge_until_it_is_fixed_or_kept(tmp_p
     assert held.returncode == 3
     assert "c1a2  nearly identical  new.ts:1-9" in held.stderr and "old9" not in held.stderr
     kept = _decisions(
-        tmp_path, [CLUSTER, old], "# kept on purpose\nc1a2 keep the parsers will diverge\n"
+        tmp_path, [CLUSTER, old], "# kept on purpose\nc1a2 keep boundary the parsers will diverge\n"
     )
     assert kept.returncode == 0, kept.stderr
     fixed = _decisions(tmp_path, [old], "")
     assert fixed.returncode == 0, fixed.stderr
 
 
-def test_a_keep_line_with_no_reason_is_refused(tmp_path):
-    done = _decisions(tmp_path, [CLUSTER], "c1a2 keep\n")
-    assert done.returncode == 1 and "line 1 is not" in done.stderr
+@pytest.mark.parametrize(
+    ("line", "code"),
+    [
+        ("c1a2 keep\n", 1),
+        ("c1a2 keep the parsers will diverge\n", 1),
+        ("c1a2 keep issue: share it later\n", 1),
+        ("c1a2 keep shape two tables of columns\n", 0),
+        ("c1a2 keep issue:#12 share the parser\n", 0),
+    ],
+)
+def test_a_keep_names_one_reason_from_the_list_and_why(tmp_path, line, code):
+    done = _decisions(tmp_path, [CLUSTER], line)
+    assert done.returncode == code, done.stderr
+    if code:
+        assert "line 1 is not" in done.stderr
+
+
+@pytest.mark.parametrize(
+    ("kind", "path", "held"),
+    [
+        ("nearly_identical", "src/new.ts", True),
+        ("identical", "src/new.ts", True),
+        ("loosely_similar", "src/new.ts", False),
+        ("structural_only", "src/new.ts", False),
+        ("nearly_identical", "tests/Today/NewTests.cs", False),
+        ("nearly_identical", "src/Tend.Tests/NewTests.cs", False),
+        ("identical", "web/new.test.ts", False),
+        ("identical", "pkg/test_new.py", False),
+        ("identical", "src/Proj/FooTest.cs", False),
+        ("identical", "e2e/flow.sh", False),
+        ("identical", "qa/specs/flow.sh", False),
+        ("identical", "src/test_runner.ts", True),
+        ("identical", "src/ABTests/new.ts", True),
+        ("identical", "src/e2e/new.ts", True),
+    ],
+)
+def test_only_a_copy_in_production_code_needs_a_decision(tmp_path, kind, path, held):
+    cluster = {
+        **CLUSTER,
+        "kind": kind,
+        "occurrences": [
+            {"path": path, "start_line": 1, "end_line": 9, "in_diff": True},
+            {"path": "src/old.ts", "start_line": 5, "end_line": 13, "in_diff": False},
+        ],
+    }
+    done = _decisions(tmp_path, [cluster], "")
+    assert done.returncode == (3 if held else 0), done.stderr
+
+
+STUB_REVIEW_CURL = r"""#!/usr/bin/env bash
+# The review API: logs argv and the request body, answers $ANSWER or fails with $CURL_RC.
+echo "curl $*" >>"$STUB_LOG"
+cat >>"$STUB_LOG"
+[[ -z "${CURL_RC:-}" ]] || exit "$CURL_RC"
+printf '%s' "$ANSWER"
+"""
+
+
+def _verdict(verdict: str) -> str:
+    content = json.dumps({"verdict": verdict, "why": f"the model says {verdict}"})
+    return json.dumps({"choices": [{"message": {"content": content}}]})
+
+
+@pytest.mark.parametrize(
+    ("keep", "env", "code", "called", "says"),
+    [
+        (
+            "shape two tables of columns",
+            {"ANSWER": _verdict("keep")},
+            0,
+            True,
+            "keep  c1a2 (shape)",
+        ),
+        ("boundary api and worker", {"ANSWER": _verdict("share")}, 3, True, "the model says share"),
+        (
+            "issue:#12 share the parser",
+            {"ANSWER": _verdict("share")},
+            0,
+            False,
+            "no shape or boundary",
+        ),
+        (
+            "shape two tables",
+            {"ANSWER": _verdict("keep"), "DESLOP_REVIEW_KEY": ""},
+            0,
+            False,
+            "WARNING",
+        ),
+        ("shape two tables", {"CURL_RC": "22"}, 1, True, "re-run the job"),
+        ("shape two tables", {"ANSWER": '{"choices": []}'}, 1, True, "re-run the job"),
+        ("shape two tables", {"ANSWER": _verdict("")}, 1, True, "re-run the job"),
+    ],
+)
+def test_a_second_model_checks_each_shape_or_boundary_keep(tmp_path, keep, env, code, called, says):
+    stub = tmp_path / "stub"
+    stub.mkdir()
+    (stub / "curl").write_text(STUB_REVIEW_CURL)
+    (stub / "curl").chmod(0o755)
+    (tmp_path / "new.ts").write_text("const a = 1;\n" * 9)
+    (tmp_path / ".deslop-decisions").write_text(f"c1a2 keep {keep}\n")
+    log = tmp_path / "curl.log"
+    done = subprocess.run(
+        [str(deslop_scripts() / "deslop-review.sh"), "--report", str(_report(tmp_path, [CLUSTER]))],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        env={
+            **os.environ,
+            "PATH": f"{stub}:{os.environ['PATH']}",
+            "STUB_LOG": str(log),
+            "DESLOP_REVIEW_KEY": "s3cret-key",
+            **env,
+        },
+    )
+    text = log.read_text() if log.exists() else ""
+    assert done.returncode == code, done.stderr
+    assert says in done.stdout + done.stderr
+    assert log.exists() == called
+    assert "s3cret-key" not in done.stdout + done.stderr + text
+    if called:
+        assert '"model": "gpt-5.4-mini-2026-03-17"' in text and "const a = 1;" in text
 
 
 def _deslop_release(tmp_path: Path, exit_code: int) -> dict[str, str]:
@@ -2277,7 +2423,7 @@ def _deslop_pr(
     tar = tmp_path / "rel/v0.40.1/deslop-0.40.1-linux-x64.tar.gz"
     sha = sha or hashlib.sha256(tar.read_bytes()).hexdigest()
     repo = tmp_path / "repo"
-    shutil.copytree(DESLOP_SCRIPTS, repo / "scripts", ignore=shutil.ignore_patterns("forge"))
+    shutil.copytree(deslop_scripts(), repo / "scripts", ignore=shutil.ignore_patterns("forge"))
     (repo / "scripts/deslop.pin").write_text(f"version=0.40.1\nsha256={sha}\n")
     subprocess.run(["git", "init", "-q", "-b", "main", str(repo)], check=True)
     _repo(repo)
@@ -2327,9 +2473,10 @@ def test_ci_runs_the_deslop_check_on_pull_requests_with_the_pinned_release(tmp_p
         and "--fail-over 10" in ci
         and "scripts/deslop-comment.sh" in ci
         and "scripts/deslop-decisions.sh --report .deslop-pr/deslop-report.json" in ci
+        and "scripts/deslop-review.sh --report .deslop-pr/deslop-report.json" in ci
     )
     pin = (out / "scripts/deslop.pin").read_text()
-    assert pin == (DESLOP_SCRIPTS / "deslop.pin").read_text()
+    assert pin == (deslop_scripts() / "deslop.pin").read_text()
     assert "version=0.42.0\n" in pin and "sha256=a06b7f63" in pin and "min_age_days=0\n" in pin
     if forge == "github":
         jobs = yaml.safe_load(ci)["jobs"]
@@ -2376,7 +2523,10 @@ def _onedev_comment(tmp_path: Path, comments: str) -> tuple[subprocess.Completed
         "--post",
     ]
     done = subprocess.run(
-        [str(DESLOP_SCRIPTS / "deslop-comment.sh"), *args], capture_output=True, text=True, env=env
+        [str(deslop_scripts() / "deslop-comment.sh"), *args],
+        capture_output=True,
+        text=True,
+        env=env,
     )
     text = log.read_text() if log.exists() else ""
     assert "s3cret-token" not in done.stdout + done.stderr + text
@@ -2389,7 +2539,7 @@ def test_on_onedev_the_comment_is_edited_with_a_bare_body_or_added_with_a_user(t
     )
     assert done.returncode == 0, done.stderr
     assert "-X POST" in log and "/~api/pull-request-comments/5" in log
-    assert "\n<!-- deslop-pr -->\n**Deslop:** This PR adds 1 duplicate" in log
+    assert "\n<!-- deslop-pr -->\n**Deslop:** This PR adds 1 copy" in log
     done, log = _onedev_comment(tmp_path / "b", "[]")
     assert done.returncode == 0, done.stderr
     assert '"requestId": 9' in log and '"userId": 3' in log and "pull-request-comments/" not in log
@@ -2488,7 +2638,7 @@ def _nightly(tmp_path, clusters, prev=None, listed="[]", forge="github", emb=Fal
     env = {**os.environ, "PATH": f"{stub}:{os.environ['PATH']}", "GH_LIST": listed, "STUB_LOG": str(log),
         "GH_TOKEN": "s3cret-token", "GITHUB_REPOSITORY": "o/r", "ODEV_HOST": "http://forge.test",
         "ODEV_PROJECT": "team/demo", "ODEV_TOKEN": "s3cret-token"}  # fmt: skip
-    done = subprocess.run([str(DESLOP_SCRIPTS / "deslop-issues.sh"), "--report", str(rep), "--state", str(state),
+    done = subprocess.run([str(deslop_scripts() / "deslop-issues.sh"), "--report", str(rep), "--state", str(state),
         "--forge", forge, "--sha", "abcdef1234", "--post"], capture_output=True, text=True, env=env)  # fmt: skip
     text = log.read_text() if log.exists() else ""
     assert done.returncode == 0, done.stderr
@@ -2587,7 +2737,7 @@ def test_on_onedev_a_refused_tracking_value_still_records_the_baseline_and_files
 def test_the_full_scan_has_no_diff_and_asks_for_embeddings_only_when_given_an_address(tmp_path):
     env = _deslop_release(tmp_path, 0)
     repo = tmp_path / "repo"
-    shutil.copytree(DESLOP_SCRIPTS, repo / "scripts", ignore=shutil.ignore_patterns("forge"))
+    shutil.copytree(deslop_scripts(), repo / "scripts", ignore=shutil.ignore_patterns("forge"))
     tar = tmp_path / "rel/v0.40.1/deslop-0.40.1-linux-x64.tar.gz"
     (repo / "scripts/deslop.pin").write_text(
         f"version=0.40.1\nsha256={hashlib.sha256(tar.read_bytes()).hexdigest()}\n"
@@ -3306,3 +3456,67 @@ def test_the_release_tag_is_made_once_and_an_existing_tag_never_moves(tmp_path):
     git(repo, "commit", "-qam", "bump")
     assert _tag(repo).returncode == 0
     assert git(remote, "rev-parse", "v1.1.0^{commit}") == git(repo, "rev-parse", "HEAD")
+
+
+@pytest.mark.parametrize(
+    ("forge", "ci_file", "anchor", "own_job"),
+    [
+        (
+            "onedev",
+            ".onedev-buildspec.yml",
+            "- name: Deslop nightly",
+            "- name: Deploy\n  steps: []\n",
+        ),
+        (
+            "github",
+            ".github/workflows/gate.yml",
+            "name: gate",
+            "# deploy: a job the project added\n",
+        ),
+    ],
+)
+def test_an_update_merges_a_template_change_into_the_ci_file_and_keeps_the_projects_jobs(
+    tmp_path, forge, ci_file, anchor, own_job
+):
+    """A fix to a template CI job reaches every project through copier update."""
+    tpl = tmp_path / "tpl"
+    shutil.copytree(TEMPLATE / "template", tpl / "template")
+    shutil.copy(TEMPLATE / "copier.yml", tpl)
+    ident = ("-c", "user.name=t", "-c", "user.email=t@t")
+    git(tpl, "init", "-q", "-b", "main")
+    git(tpl, "add", "-A")
+    git(tpl, *ident, "commit", "-q", "-m", "v1")
+    git(tpl, "tag", "v1.0.0")
+
+    out = tmp_path / "p"
+    data = {
+        "project_name": "demo",
+        "description": "A demo project",
+        "kind": "cli",
+        "languages": ["shell"],
+        **PROFILE,
+        **INSTANCE,
+        **SLOW_BUDGETS,
+        "forge": forge,
+    }
+    run_copy(str(tpl), out, data=data, defaults=True, unsafe=True, vcs_ref="v1.0.0", quiet=True)
+    ci = out / ci_file
+    ci.write_text(ci.read_text() + own_job)
+    _repo(out)
+    git(out, "add", "-A")
+    git(out, "commit", "-q", "--no-verify", "-m", "init")
+
+    src = next((tpl / "template").rglob(f"*{Path(ci_file).name}*.jinja"))
+    src.write_text(src.read_text().replace(anchor, f"# A template fix.\n{anchor}", 1))
+    git(tpl, "add", "-A")
+    git(tpl, *ident, "commit", "-q", "-m", "v2")
+    git(tpl, "tag", "v1.0.1")
+
+    run_update(
+        out, data=data, defaults=True, unsafe=True, overwrite=True, vcs_ref="v1.0.1", quiet=True
+    )
+
+    text = ci.read_text()
+    assert "# A template fix." in text
+    assert own_job in text
+    assert "<<<<<<<" not in text

@@ -39,24 +39,30 @@ if ((post)); then
 fi
 
 marker='<!-- deslop-pr -->'
-count=$(jq '[.clusters[] | select(.intersects_diff)] | length' "$report")
-body=$(jq -r --arg marker "$marker" '
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+count=$(jq -L "$here" 'include "deslop-gate"; [.clusters[] | select(needs_decision)] | length' "$report")
+body=$(jq -L "$here" -r --arg marker "$marker" 'include "deslop-gate";
   def lines: "`\(.path):\(.start_line)-\(.end_line)`";
-  . as $r | [.clusters[] | select(.intersects_diff)] | sort_by(-.mass) as $all
+  . as $r | [.clusters[] | select(needs_decision)] | sort_by(-.mass) as $all
   | ($all | length) as $n
+  | ([$r.clusters[] | select(.intersects_diff and (needs_decision | not))] | length) as $loose
   | $marker + "\n"
-  + if $n == 0 then "**Deslop:** No new duplicates."
-    else "**Deslop:** This PR adds \($n) duplicate\(if $n == 1 then "" else "s" end)"
-      + " (\($r.metrics.diff.duplication_percent * 10 | round / 10)% of its added lines)."
+  + if $n == 0 then "**Deslop:** No new copies."
+    else "**Deslop:** This PR adds \($n) cop\(if $n == 1 then "y" else "ies" end)"
+      + " (\($r.metrics.diff.duplication_percent * 10 | round / 10)% of its added lines are duplicated)."
       + ($all[:10] | to_entries | map(
           "\n\n\(.key + 1). **\(.value.kind | gsub("_"; " "))** `\(.value.id)`: new \([.value.occurrences[] | select(.in_diff) | lines] | join(", "))"
           + (([.value.occurrences[] | select(.in_diff | not) | lines] | .[:3]) as $old
             | if ($old | length) > 0 then "; existing copy \($old | join(", "))" else "; no existing copy, both are new" end)
         ) | join(""))
       + if $n > 10 then "\n\n…and \($n - 10) more." else "" end
-      + "\n\nFix each one, or keep it with a line `<cluster id> keep <reason>` in `.deslop-decisions`."
+      + "\n\nFix each one: share the code, or call what already exists."
+      + " Keep one only with a line `<cluster id> keep <shape|boundary|issue:REF> <why>` in `.deslop-decisions`"
+      + " (the reasons are at the top of `scripts/deslop-decisions.sh`)."
       + " The Duplicate code check fails until each one has a decision."
-    end' "$report")
+    end
+  + if $loose > 0 then "\n\n\($loose) looser or test-only match\(if $loose == 1 then "" else "es" end) need no decision; the report lists them."
+    else "" end' "$report")
 
 if ((! post)); then
   printf '%s\n\n(dry run: add --post to post it)\n' "$body"

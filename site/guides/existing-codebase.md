@@ -50,7 +50,7 @@ Use this guide to start using the practice in a repo that you already have. The 
    scripts/gate.sh --size-baseline
    ```
 
-6. **Check the CI file.** The template seeds one for your forge: `.onedev-buildspec.yml` on OneDev, `.github/workflows/gate.yml` on GitHub. Each runs the full gate on every pull request into `main` and every push to `main`, split into one job per language when one image cannot hold every toolchain. If the repo already had a file at that path, the template left it alone: make it run `scripts/gate.sh --full`.
+6. **Check the CI file.** The template seeds one for your forge: `.onedev-buildspec.yml` on OneDev, `.github/workflows/gate.yml` on GitHub. Each runs the full gate on every pull request into `main` and every push to `main`, split into one job per language when one image cannot hold every toolchain. If the repo already had a file at that path, Copier asks before it replaces it. Let it replace the file, then add your own jobs back below the template's: later updates merge the template's changes and keep your jobs.
 
    Every branch trigger in the file names the `default_branch` answer (`main` unless you set another, for example `master`). Set the answer in your environment file or on the Copier prompt, before the first copy.
 
@@ -97,7 +97,7 @@ When the template has a new release, update the repo from inside it:
 uvx --exclude-newer "7 days" copier update --data-file <environment.yml>
 ```
 
-`copier update` merges the template's changes into the files that it keeps in step, and leaves the seeded files alone.
+`copier update` merges the template's changes into the files that it keeps in step, the CI file included, and leaves the seeded files alone.
 
 ## Next steps
 

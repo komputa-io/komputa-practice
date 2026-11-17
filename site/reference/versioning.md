@@ -47,4 +47,4 @@ The job `Tag release` (OneDev) or the workflow `tag-release.yml` (GitHub) runs `
 - **OneDev** uses the job secrets `ONEDEV_USER` and `ONEDEV_TOKEN` that `Update dependencies` already uses. The account must be allowed to push a tag. No new secret.
 - **GitHub** uses the workflow's `contents: write` permission.
 
-The build spec belongs to the repo after the first copy, so `copier update` does not add the job to an older project. Copy the `Tag release` job from the template into its build spec. The gate's CI pattern check then keeps it there.
+`copier update` adds the job to an older project's build spec. The gate's CI pattern check then keeps it there.

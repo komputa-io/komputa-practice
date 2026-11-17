@@ -7,7 +7,9 @@ _min_copier_version: "9.18"
 _subdirectory: template
 _answers_file: .copier-answers.yml
 # Seeded once: the repo owns these after the first copy. Every other file stays
-# with the template and `copier update` merges changes into it.
+# with the template and `copier update` merges changes into it. The CI files
+# (.onedev-buildspec.yml, .github/workflows/gate.yml) are not here: a project adds
+# its own jobs below the template's, and an update merges the template's changes.
 _skip_if_exists:
   - .claude/settings.json
   - CLAUDE.md
@@ -15,8 +17,6 @@ _skip_if_exists:
   - README.md
   - "{{ adr_dir }}/README.md"
   - .gitignore
-  - .onedev-buildspec.yml
-  - .github/workflows/gate.yml
   - global.json
   - Directory.Packages.props
   # No slash at the start, so each one matches in a project folder too.

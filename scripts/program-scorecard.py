@@ -15,7 +15,9 @@ out (default: migrations, lock files and an `archive/` folder).
 It also prints the measures of "What success is" (`rules/working-rules.md`): pull requests merged for each day,
 the median hours from the first commit of a pull request to its merge, fix pull requests as a share of all, and
 the count of test functions in the tree before the first merge and at the last one. A squash merge keeps no
-branch commits, so the lead time counts merge commits only.
+branch commits, so the lead time counts merge commits only. Last, the Deslop keep lines that merges added to and
+removed from `.deslop-decisions`: a keep is a copy left in place, so a count that grows with each pull request
+means the duplicate gate is waved through, not acted on.
 
 Each reading names the practice version it was made with: `_commit:` in the repo's `.copier-answers.yml` at each
 pull request, so readings from different repos and versions can be compared.
@@ -65,6 +67,20 @@ def tests_at(repo, commit, skip):
     )  # fmt: skip
     rows = (row.removeprefix(f"{commit}:").rsplit(":", 1) for row in done.stdout.splitlines())
     return sum(int(row[1]) for row in rows if len(row) == 2 and not skip.search(row[0]))
+
+
+def keeps_changed(repo, window, branch):
+    """Keep lines that merges on the branch added to and removed from .deslop-decisions."""
+    diff = git(repo, "log", "--first-parent", "--diff-merges=first-parent", "-p", "--format=", *window, branch,
+               "--", ".deslop-decisions")  # fmt: skip
+    keep = re.compile(r"^\S+\s+keep\s")
+    added = sum(
+        1 for d in diff if d.startswith("+") and not d.startswith("+++") and keep.match(d[1:])
+    )
+    removed = sum(
+        1 for d in diff if d.startswith("-") and not d.startswith("---") and keep.match(d[1:])
+    )
+    return added, removed
 
 
 def lead_hours(repo, commit, merged):
@@ -200,6 +216,8 @@ def main():
         f"test functions in the tree: {tests_at(args.repo, commits[-1][0] + '^1', skip)} before the first merge,"
         f" {tests_at(args.repo, commits[0][0], skip)} at the last"
     )
+    added, removed = keeps_changed(args.repo, window, args.branch)
+    print(f"Deslop keeps: {added} added, {removed} removed")
     return 0
 
 

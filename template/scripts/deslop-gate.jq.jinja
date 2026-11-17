@@ -1,0 +1,12 @@
+# What the Duplicate code check asks a decision for. scripts/deslop-decisions.sh
+# and scripts/deslop-comment.sh both include this file, so they agree.
+# A copy is an identical or nearly identical cluster. The looser kinds
+# (loosely_similar, structural_only) share a shape, not code; the nightly report
+# still lists them. Test code is left out, as each test reads on its own.
+# test_path is the test-file rule of test_lines in scripts/gate.sh; keep the two the same.
+def test_path:
+  test("(^|/)(tests?|__tests__)/|(^|/)[^/]+\\.Tests/|Tests?\\.cs$|(^|/)test_[^/]*\\.py$|_test\\.py$|\\.(test|spec)\\.[^/]+${% for d in test_folders %}|^{{ d | replace('.', '\\\\.') }}/{% endfor %}");
+def needs_decision:
+  .intersects_diff
+  and (.kind == "identical" or .kind == "nearly_identical")
+  and any(.occurrences[]; .in_diff and (.path | test_path | not));

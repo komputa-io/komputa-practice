@@ -42,7 +42,7 @@ Use this guide for one pull request: a bug fix, a small feature, a refactor or a
 
 4. **Read the report.** The agent opens the pull request and reports the commands it ran and what they printed. For tier 2 and up, the report includes what the verifier ran and found.
 
-5. **Decide each duplicate the pull request adds.** In a project made from the template, the Duplicate code check comments on the pull request with each duplicate Deslop finds in the added lines, and fails until each one has a decision. The agent fixes it, or keeps it with one line in `.deslop-decisions`, `<cluster id> keep <reason>`, and pushes. A cluster that a later edit changes gets a new id and needs a new decision.
+5. **Decide each copy the pull request adds.** In a project made from the template, the Duplicate code check comments on the pull request with each copy that needs a decision, and fails until each one has one. A copy needs a decision when it is identical or nearly identical and one of its new lines is outside test code; looser and test-only matches need none. The agent fixes it (shares the code, or calls what already exists), or keeps it with one line in `.deslop-decisions`, `<cluster id> keep <shape|boundary|issue:REF> <why>`, and pushes. `shape` is shared shape with no shared logic, `boundary` names a boundary the copies must not cross, and `issue:REF` links the issue that tracks the work to share them. A second model then reads each `shape` or `boundary` keep with both copies, and fails the check when it says they should be shared. A cluster that a later edit changes gets a new id and needs a new decision.
 
 6. **Merge when every check passed on the last commit.** Check that CI ran on the pull request's head commit, then merge that commit:
 
@@ -51,7 +51,7 @@ Use this guide for one pull request: a bug fix, a small feature, a refactor or a
    gh pr merge <number> --merge --match-head-commit <full head sha>
    ```
 
-   On OneDev, a project made with `trust_green_ci` runs two jobs: `CI` on the pull request and `CI on main` on the push. When the pull request's green build ran on exactly the tree that main now holds, `CI on main` skips the gate and the build takes seconds. The job secret `ONEDEV_TOKEN` (a token that reads the project's builds, authorized on main only) makes this work. The spec is seeded once, so an existing project copies the two jobs from the template by hand; `scripts/gate.sh --full` fails and names each seeded line that the spec lacks.
+   On OneDev, a project made with `trust_green_ci` runs two jobs: `CI` on the pull request and `CI on main` on the push. When the pull request's green build ran on exactly the tree that main now holds, `CI on main` skips the gate and the build takes seconds. The job secret `ONEDEV_TOKEN` (a token that reads the project's builds, authorized on main only) makes this work. `copier update` adds the two jobs to an existing project; `scripts/gate.sh --full` fails and names each template line that the spec lacks.
 
 ## Estimating an issue
 

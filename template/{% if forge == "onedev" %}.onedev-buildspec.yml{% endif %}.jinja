@@ -226,7 +226,8 @@ jobs:
 # (authorized on main only: a pull request's build must not read it).{% endif %}
 # It has no build or deploy step. {% if private_index or nuget_feed %}Its only secrets are the read-only logins
 # for the private package {% if private_index and nuget_feed %}index and feed{% elif private_index %}index{% else %}feed{% endif %}.{% else %}It asks for no secret.{% endif %} Add deploy jobs
-# below it; this file is seeded once and then belongs to the repo.
+# below the template's. `copier update` merges each template release into this
+# file and keeps the jobs you add; leave the template's own jobs as they are.
 #
 # An at-sign is interpolation syntax in a commands block, comments included.
 # A literal one must be doubled.
@@ -240,7 +241,7 @@ jobs:
 # Duplicate code that a pull request adds, found by Deslop (version and checksum
 # in scripts/deslop.pin). It runs on pull requests only, in a job of its own so a
 # missing secret fails this job and not CI. It leaves one comment on the PR and
-# edits it on each push. {% if deslop_fail_over %}It fails the PR above {{ deslop_fail_over }}% of the added lines.{% endif %}
+# edits it on each push.{% if deslop_fail_over %} It fails the PR above {{ deslop_fail_over }}% of the added lines.{% endif %}
 # It fails while a duplicate the PR adds has no decision: fixed, or kept in
 # .deslop-decisions (scripts/deslop-decisions.sh).
 # The comment needs one job secret, the access token of an account that may
@@ -252,6 +253,11 @@ jobs:
 # The comment goes through curl and the REST API; the token is read from the
 # environment, never from an argument. A failed comment prints a WARNING line
 # and leaves the job green.
+# A second model checks each shape or boundary keep (scripts/deslop-review.sh)
+# and fails the job when it says the copies should be shared. It needs the job
+# secret DESLOP_REVIEW_KEY, an OpenAI API key with a spend cap, readable on every
+# branch for the same reason:
+#   {{ vault_command }} <item> | odev secret set DESLOP_REVIEW_KEY --branches '**'
 - name: Duplicate code
   steps:
   - !CheckoutStep
@@ -277,10 +283,15 @@ jobs:
         if [ "$rc" -eq 0 ]; then
           scripts/deslop-decisions.sh --report .deslop-pr/deslop-report.json || rc=$?
         fi
+        if [ "$rc" -eq 0 ]; then
+          scripts/deslop-review.sh --report .deslop-pr/deslop-report.json || rc=$?
+        fi
         exit "$rc"
     envVars:
     - name: ODEV_TOKEN
       value: '@secret:ONEDEV_COMMENT_TOKEN@'
+    - name: DESLOP_REVIEW_KEY
+      value: '@secret:DESLOP_REVIEW_KEY@'
     useTTY: false
     condition: ALL_PREVIOUS_STEPS_WERE_SUCCESSFUL
   - !PublishArtifactStep
@@ -303,7 +314,9 @@ jobs:
 # account that may write issues: ONEDEV_ISSUES_TOKEN. Set it once, from your own
 # shell:
 #   {{ vault_command }} <item> | odev secret set ONEDEV_ISSUES_TOKEN
-# Last night's clusters live in a job cache. The token is read from the environment,
+# Last night's clusters live in a job cache keyed by this project's path: OneDev
+# shares a cache key with every other project, so a fixed key would load another
+# project's clusters. The token is read from the environment,
 # never from an argument.{% if deslop_embeddings_endpoint %} Behavioural matches come from Ollama at
 # {{ deslop_embeddings_endpoint }}; the scan fails if it cannot be reached.{% endif %}
 - name: Deslop nightly
@@ -316,9 +329,9 @@ jobs:
     condition: ALL_PREVIOUS_STEPS_WERE_SUCCESSFUL
   - !SetupCacheStep
     name: Last night's clusters
-    key: deslop-nightly-state
+    key: deslop-nightly-state-@project_path@
     loadKeys:
-    - deslop-nightly-state
+    - deslop-nightly-state-@project_path@
     paths:
     - .deslop-nightly
     uploadStrategy: UPLOAD_IF_CHANGED
@@ -348,8 +361,9 @@ jobs:
   triggers:
   - !ScheduleTrigger
     cronExpression: 0 {{ nightly_minute }} {{ nightly_hour }} * * ?
-  retryCondition: never
-  maxRetries: 0
+  retryCondition: '"Log" contains "Error response from daemon"'
+  maxRetries: 3
+  retryDelay: 300
   timeout: 1800
 
 # Nightly at {{ '%02d:%02d' | format(nightly_hour, nightly_minute) }} (the same slot as Deslop nightly): scan the whole history of the default branch
@@ -396,8 +410,9 @@ jobs:
   triggers:
   - !ScheduleTrigger
     cronExpression: 0 {{ nightly_minute }} {{ nightly_hour }} * * ?
-  retryCondition: never
-  maxRetries: 0
+  retryCondition: '"Log" contains "Error response from daemon"'
+  maxRetries: 3
+  retryDelay: 300
   timeout: 1800
 
 {%- if security_review %}
@@ -601,8 +616,9 @@ jobs:
   triggers:
   - !ScheduleTrigger
     cronExpression: 0 {{ weekly_minute }} {{ weekly_hour }} ? * {{ ['MON','TUE','WED','THU','FRI','SAT','SUN'][weekly_day] }}
-  retryCondition: never
-  maxRetries: 0
+  retryCondition: '"Log" contains "Error response from daemon"'
+  maxRetries: 3
+  retryDelay: 300
   timeout: 3600
 
 # Daily, three hours after the weekly refresh's hour: merge the open dependency PR when CI passed on its merge preview,
@@ -639,6 +655,7 @@ jobs:
   triggers:
   - !ScheduleTrigger
     cronExpression: 0 {{ weekly_minute }} {{ (weekly_hour + 3) % 24 }} * * ?
-  retryCondition: never
-  maxRetries: 0
+  retryCondition: '"Log" contains "Error response from daemon"'
+  maxRetries: 3
+  retryDelay: 300
   timeout: 600

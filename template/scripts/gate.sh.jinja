@@ -790,9 +790,9 @@ if [[ -n "${want[shell]-}" ]]; then
 
   # The CI pattern every project keeps: Deslop on each pull request, the Deslop
   # nightly and the weekly dependency refresh, at this project's schedule_slot
-  # ({{ schedule_slot }}), so that projects on one server do not run at once. The
-  # build spec belongs to the repo after the first copy, so this checks it has
-  # not drifted. Full mode only: CI runs it.
+  # ({{ schedule_slot }}), so that projects on one server do not run at once.
+  # `copier update` merges the template's jobs into the build spec, and the
+  # project may edit it, so this checks it has not drifted. Full mode only: CI runs it.
   if [[ "$mode" == full ]]; then
 {%- if forge == "onedev" %}
     spec=.onedev-buildspec.yml
@@ -803,7 +803,8 @@ if [[ -n "${want[shell]-}" ]]; then
     pr_jobs() { awk '/^- name: /{if (blk ~ /PullRequestUpdateTrigger/) printf "%s", blk; blk = ""} {blk = blk $0 "\n"} END{if (blk ~ /PullRequestUpdateTrigger/) printf "%s", blk}' "$spec"; }
     pattern=(
       'Duplicate code|PullRequestUpdateTrigger'
-      'Duplicate code|scripts/deslop-decisions\.sh'
+      'Duplicate code|^[[:space:]]*scripts/deslop-decisions\.sh --report'
+      'Duplicate code|^[[:space:]]*scripts/deslop-review\.sh --report'
       'Deslop nightly|cronExpression: 0 {{ nightly_minute }} {{ nightly_hour }} \* \* \?'
       'Secret scan nightly|cronExpression: 0 {{ nightly_minute }} {{ nightly_hour }} \* \* \?'
       'Secret scan nightly|scripts/trufflehog-scan\.sh'
@@ -858,7 +859,8 @@ if [[ -n "${want[shell]-}" ]]; then
     flows=.github/workflows
     pattern=(
       "$flows/gate.yml|scripts/deslop-pr\.sh"
-      "$flows/gate.yml|scripts/deslop-decisions\.sh"
+      "$flows/gate.yml|^[[:space:]]*- run: scripts/deslop-decisions\.sh --report"
+      "$flows/gate.yml|^[[:space:]]*- run: scripts/deslop-review\.sh --report"
       "$flows/gate.yml|fetch-depth: 0"
       "$flows/gate.yml|scripts/gate\.sh --(full|only shell)"
       "$flows/deslop-nightly.yml|cron: '{{ nightly_minute }} {{ nightly_hour }} \* \* \*'"
@@ -930,7 +932,7 @@ fi
 # test_lines: one line, source lines added against test lines added since the
 # merge base. It reports and never fails: the operator sets the budget. A test
 # file is one named like a test, or under a tests, test or __tests__ folder, a
-# *.Tests folder, or one under a folder of the test_folders answer. Source is the other code files (py, cs,
+# *.Tests folder, or one under a folder of the test_folders answer (scripts/deslop-gate.jq holds the same rule). Source is the other code files (py, cs,
 # ts, tsx, js, mjs, sh, ps1). Docs, locks and data count as neither.
 test_lines() {
   local add path src=0 tst=0 f ratio
