@@ -52,25 +52,47 @@ json() {
   printf '%s' "${s//$'\n'/\\n}"
 }
 
+# open_prs: each open PR in this project as "NUMBER ID SOURCE-BRANCH", one a line.
+open_prs() {
+  local list
+  # shellcheck disable=SC2310 # the caller reports the failure.
+  list=$(api pulls -G --data-urlencode "query=\"Target Project\" is \"$ODEV_PROJECT\" and open" \
+    --data-urlencode offset=0 --data-urlencode count=100) || return 1
+  # The API puts one field on a line, with no indent, so only the brace depth tells
+  # a PR's own fields (depth 2) from those of an object nested in it. Braces inside
+  # a string do not count. awk reads it all, so curl is never cut off.
+  awk '
+    function field(line) {
+      sub(/^[^:]*:[[:space:]]*/, "", line)
+      gsub(/[",[:space:]]/, "", line)
+      return line
+    }
+    depth == 2 && /^[[:space:]]*"id"[[:space:]]*:/ { id = field($0) }
+    depth == 2 && /^[[:space:]]*"number"[[:space:]]*:/ { num = field($0) }
+    depth == 2 && /^[[:space:]]*"sourceBranch"[[:space:]]*:/ { branch = field($0) }
+    {
+      s = $0
+      gsub(/"([^"\\]|\\.)*"/, "", s)
+      for (i = 1; i <= length(s); i++) {
+        c = substr(s, i, 1)
+        if (c == "{" || c == "[") {
+          if (++depth == 2) { id = ""; num = ""; branch = "" }
+        } else if (c == "}" || c == "]") {
+          if (depth-- == 2 && num != "") print num, id, branch
+        }
+      }
+    }
+  ' <<<"$list"
+}
+
 # pr_id NUMBER: the global id of an open PR in this project; the API takes it, not the number.
 pr_id() {
   local list id
   # shellcheck disable=SC2310 # the status is the answer.
   list=$(open_prs) || die "could not list the open PRs"
-  id=$(awk -v n="$1" '
-    /^  \{/ { id = ""; num = "" }
-    /^    "id"/ { id = $3; sub(/,$/, "", id) }
-    /^    "number"/ { num = $3; sub(/,$/, "", num) }
-    /^  \}/ && num == n && !found { found = id }
-    END { if (found != "") print found }
-  ' <<<"$list")
+  id=$(awk -v n="$1" '$1 == n { print $2; exit }' <<<"$list")
   [[ "$id" =~ ^[1-9][0-9]*$ ]] || die "no open PR #$1 in $ODEV_PROJECT"
   printf '%s' "$id"
-}
-
-open_prs() {
-  api pulls -G --data-urlencode "query=\"Target Project\" is \"$ODEV_PROJECT\" and open" \
-    --data-urlencode offset=0 --data-urlencode count=100
 }
 
 open_update_prs() {
@@ -78,14 +100,7 @@ open_update_prs() {
   check
   # shellcheck disable=SC2310 # the status is the answer.
   list=$(open_prs) || die "could not list the open PRs, so cannot tell whether an update PR is waiting"
-  # OneDev pretty-prints JSON; a PR's own fields sit at four spaces, in no fixed order.
-  # awk reads it all, so curl is never cut off.
-  awk '
-    /^  \{/ { branch = ""; num = "" }
-    /^    "sourceBranch"/ { branch = $3; gsub(/[",]/, "", branch) }
-    /^    "number"/ { num = $3; sub(/,$/, "", num) }
-    /^  \}/ && (branch == "chore/deps-weekly" || branch ~ /^chore\/update-deps-/) { print num, branch }
-  ' <<<"$list"
+  awk '$3 == "chore/deps-weekly" || $3 ~ /^chore\/update-deps-/ { print $1, $3 }' <<<"$list"
 }
 
 # post ID ACTION TEXT: a PR action whose body is raw text (OneDev reads the entity as it is).

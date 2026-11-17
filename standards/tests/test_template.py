@@ -1420,26 +1420,28 @@ def test_the_refresh_opens_its_pr_through_the_onedev_api(tmp_path):
 
 
 def _open_pr(number: int, branch: str) -> str:
-    """One PR as OneDev prints it: its own fields at four spaces, the number after the branch."""
+    """One PR as the OneDev REST API sends it: no indent, a space before each colon,
+    nested objects, braces inside the description, and the number after the branch."""
     return (
-        f'  {{\n    "id" : {number + 1000},\n    "status" : "OPEN",\n    "targetBranch" : "main",\n'
-        f'    "sourceBranch" : "{branch}",\n    "submitTimeGroups" : {{\n      "day" : 1\n    }},\n'
-        f'    "number" : {number},\n    "commentCount" : 0,\n    "targetProjectId" : 42\n  }}'
+        f'{{\n"id" : {number + 1000},\n"status" : "OPEN",\n"description" : "see {{x}} or }}, {{",\n'
+        f'"targetBranch" : "main",\n"sourceBranch" : "{branch}",\n"submitTimeGroups" : {{\n'
+        f'"day" : 1\n}},\n"number" : {number},\n"lastActivity" : {{\n"userId" : 10\n}},\n'
+        f'"targetProjectId" : 42\n}}'
     )
 
 
-OPEN_UPDATE_PRS = (
-    "[\n"
-    + _open_pr(5, "feat/x")
-    + ",\n"
-    + _open_pr(9, "chore/deps-weekly")
-    + ",\n"
-    + _open_pr(4, "chore/update-deps-2026-11-09")
-    + "\n]"
+def _pr_list(*prs: str) -> str:
+    return "[ " + ", ".join(prs) + " ]"
+
+
+OPEN_UPDATE_PRS = _pr_list(
+    _open_pr(5, "feat/x"),
+    _open_pr(9, "chore/deps-weekly"),
+    _open_pr(4, "chore/update-deps-2026-11-09"),
 )
-OPEN_CREATED = "[\n" + _open_pr(7, "chore/deps-weekly") + "\n]"
+OPEN_CREATED = _pr_list(_open_pr(7, "chore/deps-weekly"))
 GITHUB_UPDATE_PRS = "9 chore/deps-weekly\n4 chore/update-deps-2026-11-09\n"
-OPEN_OTHER_PRS = "[\n" + _open_pr(5, "feat/x") + "\n]"
+OPEN_OTHER_PRS = _pr_list(_open_pr(5, "feat/x"))
 
 
 @pytest.mark.parametrize(
