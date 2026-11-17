@@ -112,12 +112,12 @@ jobs:
         with:
           path: {% raw %}${{ runner.temp }}{% endraw %}/out
       - run: |
-          for p in "$RUNNER_TEMP"/out/*/*.patch; do
-            if [[ -s "$p" ]]; then git apply --index "$p"; fi
-          done
-          for n in "$RUNNER_TEMP"/out/*/update-deps-images.txt; do
-            if [[ -f "$n" ]]; then cp "$n" "$(git rev-parse --git-dir)/"; fi
-          done
+          while IFS= read -r -d '' p; do
+            git apply --index "$p"
+          done < <(find "$RUNNER_TEMP/out" -name '*.patch' -size +0 -print0)
+          while IFS= read -r -d '' n; do
+            cp "$n" "$(git rev-parse --git-dir)/"
+          done < <(find "$RUNNER_TEMP/out" -name update-deps-images.txt -print0)
           git config user.name "Dependency update"
           git config user.email "deps@${GITHUB_SERVER_URL#https://}"
           scripts/update-deps.sh --publish-only

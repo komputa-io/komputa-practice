@@ -2826,3 +2826,53 @@ def test_the_drift_check_takes_the_seeded_lines_in_any_job_that_pull_requests_ru
     spec.write_text(seeded.replace("- !PullRequestUpdateTrigger", "- !BranchUpdateTrigger", 1))
     none = full_gate_in_ci(out)
     assert none.returncode != 0 and "needs a job that pull requests run with" in none.stderr
+
+
+@pytest.mark.parametrize("layout", ["single", "split"])
+def test_the_github_open_pr_step_stages_the_patch_of_either_artifact_layout(tmp_path, layout):
+    """One refresh job downloads straight into out/; split jobs into out/<job>/."""
+    out = render(tmp_path / "p", ["shell"], forge="github")
+    wf = yaml.safe_load((out / ".github/workflows/update-deps.yml").read_text())
+    script = next(
+        s["run"] for s in wf["jobs"]["open-pr"]["steps"] if "--publish-only" in s.get("run", "")
+    )
+    repo = tmp_path / "repo"
+    (repo / "scripts").mkdir(parents=True)
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    (repo / "a b.txt").write_text("old\n")
+    (repo / "scripts/update-deps.sh").write_text("#!/usr/bin/env bash\ngit status --porcelain\n")
+    (repo / "scripts/update-deps.sh").chmod(0o755)
+    git(repo, "add", "-A")
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(repo),
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@t",
+            "commit",
+            "-q",
+            "-m",
+            "init",
+        ],
+        check=True,
+    )
+    (repo / "a b.txt").write_text("new\n")
+    patch = subprocess.run(
+        ["git", "-C", str(repo), "diff"], capture_output=True, text=True, check=True
+    ).stdout
+    git(repo, "checkout", "-q", "--", ".")
+    folder = tmp_path / "tmp/out" / ("" if layout == "single" else "refresh job")
+    folder.mkdir(parents=True)
+    (folder / "deps.patch").write_text(patch)
+    done = subprocess.run(
+        ["bash", "-c", script],
+        cwd=repo,
+        env={**os.environ, "RUNNER_TEMP": str(tmp_path / "tmp"), "GITHUB_SERVER_URL": "https://x"},
+        capture_output=True,
+        text=True,
+    )
+    assert done.returncode == 0, done.stderr
+    assert done.stdout.startswith("M  "), done.stdout
