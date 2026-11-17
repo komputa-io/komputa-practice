@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+# Files one issue for each finding that scripts/security-review.sh wrote.
+#   scripts/security-issues.sh --findings FILE [--forge github|onedev --post]
+# Dry run by default: prints what it would file and changes nothing. With --post it files the
+# issues through scripts/forge/<forge>.sh (needs jq; the forge variables are the ones that
+# script names). Each issue holds a marker with the finding's fingerprint, so a finding that
+# has an issue, open or closed, is never filed again. At most CAP issues a run.
+# A finding is a live vulnerability, so it is never filed where the world can read it:
+# on a public GitHub repo this refuses and the findings stay in the job's artifact; on OneDev
+# the issue is confidential. Exit 0 on success, 1 on failure, 2 on misuse.
+set -Eeuo pipefail
+shopt -s inherit_errexit
+trap 'printf "%s: line %d: %s exited %d\n" "${0##*/}" "$LINENO" "$BASH_COMMAND" "$?" >&2' ERR
+die() {
+  printf 'security-issues: %s\n' "$*" >&2
+  exit 1
+}
+usage() {
+  printf 'usage: scripts/security-issues.sh --findings FILE [--forge github|onedev --post]\n' >&2
+  exit 2
+}
+
+readonly CAP=10
+findings='' forge='' post=0
+while (($# > 0)); do
+  case "$1" in
+    --post) post=1 ;;
+    --findings | --forge)
+      (($# > 1)) || usage
+      case "$1" in --findings) findings=$2 ;; *) forge=$2 ;; esac
+      shift
+      ;;
+    *) usage ;;
+  esac
+  shift
+done
+[[ -f "$findings" ]] || usage
+if ((post)); then [[ "$forge" =~ ^(github|onedev)$ ]] || usage; fi
+jq -e '.schema == 1 and (.findings | type == "array")' "$findings" >/dev/null || die "$findings is not a security-review findings file"
+total=$(jq '.findings | length' "$findings")
+
+# Finding text is untrusted: it may carry a marker (to hide another finding) or an @mention.
+# So it loses "<!--", "-->", backticks and "@", and sits in a fenced block.
+body_of() { # one finding on stdin
+  jq -r 'def clean: tostring | gsub("<!--|-->|`|@"; "");
+    "<!-- security-review: \(.fingerprint) -->\n```text\n\(.body | clean)\n```\n\n- Tool: \(.tool | clean)\n- Severity (the tool'"'"'s own): \(.severity | clean)\n- Where: `\(.location | clean)`\n\n"
+    + "Rank it on the threat model before you act: a tool'"'"'s severity is a first guess. Close the issue when it is fixed or judged not exploitable, and say why.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)"'
+}
+title_of() { jq -r '"Security review: \(.title[:90]) (\(.fingerprint[:8]))"'; }
+
+if ((! post)); then
+  printf 'findings: %s, would file up to %s\n' "$total" "$CAP"
+  while IFS= read -r row; do
+    printf '%s\n' "$(title_of <<<"$row")"
+  done < <(jq -c --argjson cap "$CAP" '.findings[:$cap][]' "$findings")
+  printf '(dry run: add --forge and --post to file issues)\n'
+  exit 0
+fi
+
+helper="$(dirname "${BASH_SOURCE[0]}")/forge/$forge.sh"
+[[ -x "$helper" ]] || die "no $helper"
+# A failed lookup is not "private": file only on a clear "no".
+public=$("$helper" repo-public) || die "could not tell whether the repo is public, so no issue is filed"
+case "$public" in
+  no) ;;
+  yes) die "this repo is public: a finding would disclose a live vulnerability, so no issue is filed. The findings stay in the job artifact" ;;
+  *) die "unclear answer from repo-public: '$public'" ;;
+esac
+filed=0 known=0
+while IFS= read -r row; do
+  fp=$(jq -r .fingerprint <<<"$row")
+  # A failed lookup must stop the run: an empty answer would read as "not filed yet".
+  hit=$("$helper" issue-marked "<!-- security-review: $fp -->") || die "could not look up the issues"
+  if [[ -n "$hit" ]]; then
+    known=$((known + 1))
+    continue
+  fi
+  ((filed < CAP)) || break
+  "$helper" issue-create-security "$(title_of <<<"$row")" "$(body_of <<<"$row")"
+  filed=$((filed + 1))
+done < <(jq -c '.findings[]' "$findings")
+printf 'security-issues: %s findings, filed %s, already filed %s\n' "$total" "$filed" "$known"

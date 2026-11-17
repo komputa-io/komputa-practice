@@ -29,6 +29,7 @@ _skip_if_exists:
   - rust-toolchain.toml
   - .deslop.toml
   - scripts/deslop.pin
+  - scripts/security.pin
   - scripts/trivy.pin
 _tasks:
   # A new project gets a git repo; an existing one keeps its own.
@@ -353,6 +354,29 @@ weekly_minute:
   type: int
   when: false
   default: "{{ ((schedule_slot // 7) * 5) % 60 }}"
+
+security_review:
+  type: bool
+  help: >-
+    Add the Security review job: Strix and the Cloudflare security-audit skill over the
+    source, by hand and once a month, on the default branch only, with each finding filed
+    as an issue. It needs a runner with the label `security` (GitHub) or an executor
+    named `security` (OneDev), and the secrets SECURITY_LLM_KEY and SECURITY_LLM_BASE.
+  default: "{{ kind in ['service', 'app'] }}"
+
+security_budget_usd:
+  type: int
+  help: The most dollars one Security review run may spend, split between the two tools
+  default: 40
+  when: "{{ security_review }}"
+  validator: "{% if security_budget_usd < 2 %}Give at least 2.{% endif %}"
+
+threat_model:
+  type: str
+  help: The file with the threat model and severity scale that the Security review brief points to
+  default: docs/architecture.md
+  when: "{{ security_review }}"
+  validator: "{% if not (threat_model | regex_search('^[A-Za-z0-9_][A-Za-z0-9_./-]*$')) or '..' in threat_model %}Give a path under the repo root.{% endif %}"
 
 test_folders:
   type: yaml

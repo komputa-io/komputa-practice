@@ -1,6 +1,6 @@
 ---
 name: house-delivery
-description: "The house rules for delivering software, on any forge or cloud. Use for any task that writes or changes a CI or CD pipeline or build spec (.onedev-buildspec.yml, azure-pipelines.yml, .github/workflows); pins a shared template, action or job image; runs helm upgrade or another release to Kubernetes; changes Terraform, OpenTofu or Bicep; names cloud resources; sets up build agents or runners; gives a deploy job its credentials; sets up a ZAP scan; or adds an SBOM or provenance. Covers immutable pins, a release that ends at the last good state, plan before apply, one artefact promoted by digest, short-lived deploy credentials, a fresh agent per job, scan findings as tracked work, and scheduled shutdown of non-production. Not for a shell script's own form, service health and alerts, or driving odev."
+description: "The house rules for delivering software, on any forge or cloud. Use for any task that writes or changes a CI or CD pipeline or build spec (.onedev-buildspec.yml, azure-pipelines.yml, .github/workflows); pins a shared template, action or job image; runs helm upgrade or another release to Kubernetes; changes Terraform, OpenTofu or Bicep; names cloud resources; sets up build agents or runners; gives a deploy job its credentials; sets up a ZAP, Trivy, TruffleHog or Strix scan; or adds an SBOM or provenance. Covers immutable pins, a release that ends at the last good state, plan before apply, one artefact promoted by digest, short-lived deploy credentials, a fresh agent per job, scan findings as tracked work, where each security scan runs, and scheduled shutdown of non-production. Not for a shell script's own form, service health and alerts, or driving odev."
 metadata:
   author: "Komputa"
   version: "0.1"
@@ -140,3 +140,44 @@ ADR.
 - **A finding becomes one tracked issue.** A confirmed finding at the severity the
   rules file sets to FAIL opens an issue, deduplicated by rule and URL. A report
   that nobody opens is not a control.
+
+## Security scanning
+
+- **Each scan runs where its cost fits.**
+  - On each PR, the gate runs Trivy over the lock files for known
+    vulnerabilities in Python, TypeScript and .NET. Rust keeps `cargo deny`.
+    The scan is cheap and gives the same result each time.
+  - Each night, TruffleHog scans the whole git history with `--only-verified`.
+    It is too slow for each PR, and a verified secret is a live one.
+  - The `Security review` job runs Strix in source mode and the Cloudflare
+    security-audit skill through `scripts/security-review.sh`. It is for a
+    service or an app, and runs by hand and once a month. A run spends up to
+    its `--budget` (default $40), and its results change from run to run.
+- **Pin each scanner to an exact version at least seven days old.** Pin an
+  image by digest. Check a downloaded binary by sha256, and by cosign where the
+  project signs it. Never use a tag or `latest`. The reason: Trivy v0.69.4 to
+  v0.69.6 were compromised in March 2026 (CVE-2026-33634). The `Security
+  review` job keeps its pins in `scripts/security.pin`. The weekly dependency
+  job does not move them: raise one by hand, in a PR, after you read what
+  changed.
+- **Strix runs on its own scan host.** Strix needs the Docker socket, and the
+  job holds an LLM key. The Docker socket rule above forbids that pair on a
+  shared agent. Use a VM, not a container: Strix runs exploit code that a model
+  wrote. The host runs nothing else. Its egress reaches only the forge, the LLM
+  API and the registries it pulls from. No server caps the key, so
+  `--budget` is mandatory: the script passes it to Strix as `--max-budget` and
+  to Claude Code as `--max-budget-usd`, and accepts only the models in
+  `scripts/security.pin` that Strix can price.
+- **Turn off each scanner's telemetry.** Set `STRIX_TELEMETRY=0` on every Strix
+  run.
+- **A finding becomes one tracked issue**, as in Dynamic scanning.
+  `scripts/security-issues.sh` files each finding once, deduplicated by a
+  fingerprint in the issue body.
+- **The `Security review` job runs on `main` only.** Never run it on a pull
+  request from outside. Its agents read the code that they scan. That code can
+  carry a prompt injection, and the job holds the LLM key and the Docker socket.
+  A branch can edit the job's own guard, so the guard is the secrets: limit them
+  to the default branch (OneDev `odev secret set ... --branches main`; GitHub, an
+  environment `security-review` that only the default branch can use). On GitHub
+  the job runs on private repos only, and the `security` runner serves private
+  repos only.

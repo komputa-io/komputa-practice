@@ -20,6 +20,7 @@ from this repo, so each page is also a file here:
 | Install it and make a first change | [Quickstart](https://docs.komputa.io/start/quickstart) | `site/start/quickstart.md` |
 | Do a task with it | [Guides](https://docs.komputa.io/guides) | `site/guides/` |
 | The ideas and the evidence | [Explanation](https://docs.komputa.io/explanation) | `site/explanation/`, `docs/` |
+| Release the template | [Release procedure](docs/release.md) | `docs/release.md` |
 | Look something up | [Reference](https://docs.komputa.io/reference) | `site/reference/`, `rules/`, generated pages |
 
 ## Check

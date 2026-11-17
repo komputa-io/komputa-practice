@@ -1,0 +1,199 @@
+#!/usr/bin/env bash
+# Runs Strix and the Cloudflare security-audit skill over this repo's source, and writes the
+# findings as one JSON file for scripts/security-issues.sh.
+#   scripts/security-review.sh --budget USD [--apply] [--tool strix|cloudflare|both]
+#                              [--scope DIR] [--threat-model FILE] [--out DIR]
+# --budget is required, dry run or not. Dry run by default: prints what it would run, with the pins and the budget, and runs nothing.
+# With --apply it runs. It refuses any ref but the default branch (SECURITY_DEFAULT_BRANCH, or
+# main): the LLM key is in the environment, and code on another branch could carry a prompt
+# injection that leaks it.
+# The environment holds SECURITY_LLM_KEY and SECURITY_LLM_BASE (https://api.anthropic.com
+# only: Strix can price only a model it knows, and a model it cannot price never trips its
+# cost cap); SECURITY_LLM_MODEL names a claude-* model (default claude-opus-5-5). The key is
+# never an argument and never printed, and no step here traces commands. Strix runs with its
+# own HOME inside the work folder, because it saves the key in ~/.strix/cli-config.json.
+# After a run the script fails when the key is found in anything it wrote, and then deletes
+# the findings so that no later step can publish them.
+# The budget is split between the tools when both run. Strix caps it in dollars. The skill
+# counts it in agent runs (about USD / 1.2, never fewer than 8); claude also gets a dollar cap.
+# Output: DIR/findings.json, shape {"schema":1,"commit","tools":[...],"findings":[{"fingerprint",
+# "tool","severity","title","location","body"}]}, and each tool's own report under DIR/raw.
+# Exit 0 on success, 1 on failure, 2 on misuse.
+set -Eeuo pipefail
+shopt -s inherit_errexit
+trap 'printf "%s: line %d: %s exited %d\n" "${0##*/}" "$LINENO" "$BASH_COMMAND" "$?" >&2' ERR
+die() {
+  printf 'security-review: %s\n' "$*" >&2
+  exit 1
+}
+usage() {
+  printf 'usage: scripts/security-review.sh --budget USD [--apply] [--tool strix|cloudflare|both] [--scope DIR] [--threat-model FILE] [--out DIR]\n' >&2
+  exit 2
+}
+
+here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+root=$(cd "$here/.." && pwd)
+apply=0 tool=both budget='' scope=. threat=docs/architecture.md out=security-review-out
+while (($# > 0)); do
+  case "$1" in
+    --apply) apply=1 ;;
+    --tool | --budget | --scope | --threat-model | --out)
+      (($# > 1)) || usage
+      case "$1" in --tool) tool=$2 ;; --budget) budget=$2 ;; --scope) scope=$2 ;; --threat-model) threat=$2 ;; *) out=$2 ;; esac
+      shift
+      ;;
+    *) usage ;;
+  esac
+  shift
+done
+[[ "$tool" =~ ^(strix|cloudflare|both)$ && "$scope" =~ ^[A-Za-z0-9_./-]+$ && "$scope" != *..* ]] || usage
+# The budget is the only cap on spend (the endpoint may have none), so a run without one is refused.
+[[ "$budget" =~ ^[1-9][0-9]*$ ]] || die "--budget USD is required (a whole number of dollars): nothing else caps the spend"
+
+# shellcheck source=/dev/null # the pin file is KEY=VALUE lines
+. "$here/security.pin"
+: "${STRIX_VERSION:?}" "${STRIX_SANDBOX:?}" "${CLOUDFLARE_SKILL_COMMIT:?}"
+model=${SECURITY_LLM_MODEL:-claude-opus-5-5}
+default_branch=${SECURITY_DEFAULT_BRANCH:-main}
+# Strix counts cost only for a model its LiteLLM can price, and the budget is the only cap
+# on spend, so refuse any model not in the pin file's checked list.
+[[ " ${PRICED_MODELS:?} " == *" $model "* ]] || die "SECURITY_LLM_MODEL must be one of: $PRICED_MODELS (models Strix can price)"
+
+# The ref: the CI's own variable first (a checkout there is often detached), then git.
+ref=${GITHUB_REF_NAME:-${SECURITY_REF:-$(git -C "$root" symbolic-ref --short -q HEAD || true)}}
+[[ "$ref" == "$default_branch" ]] || die "refusing to run on '${ref:-no branch}': this job runs on $default_branch only"
+
+share=$budget
+[[ "$tool" != both ]] || share=$((budget / 2))
+((share >= 1)) || die "--budget must be at least 2 when both tools run"
+agent_runs=$((share * 10 / 12))
+((agent_runs >= 8)) || agent_runs=8 # the skill's own minimum is 6: mapping, a coverage check, a confirmation
+
+printf 'security-review plan (%s)\n' "$([[ $apply == 1 ]] && echo apply || echo 'dry run')"
+printf '  ref: %s (default branch %s)\n  scope: %s\n  threat model: %s\n  model: %s\n' "$ref" "$default_branch" "$scope" "$threat" "$model"
+printf '  budget: $%s in all, $%s each tool\n  output: %s\n' "$budget" "$share" "$out"
+if [[ "$tool" != cloudflare ]]; then
+  printf '  strix: strix-agent==%s, sandbox %s, STRIX_TELEMETRY=0, source mode, --max-budget %s\n' "$STRIX_VERSION" "$STRIX_SANDBOX" "$share"
+fi
+if [[ "$tool" != strix ]]; then
+  printf '  cloudflare: security-audit-skill at %s, claude -p, --max-budget-usd %s, about %s agent runs\n' "$CLOUDFLARE_SKILL_COMMIT" "$share" "$agent_runs"
+fi
+if ((! apply)); then
+  printf '(dry run: add --apply to run it)\n'
+  exit 0
+fi
+
+[[ -n "${SECURITY_LLM_KEY:-}" && -n "${SECURITY_LLM_BASE:-}" ]] || die "set SECURITY_LLM_KEY and SECURITY_LLM_BASE in the environment"
+[[ "${SECURITY_LLM_BASE%/}" == https://api.anthropic.com ]] || die "SECURITY_LLM_BASE must be https://api.anthropic.com: Strix cannot price a model behind another endpoint"
+[[ -f "$root/$threat" ]] || die "no threat model at $threat"
+[[ -d "$root/$scope" ]] || die "no scope folder $scope"
+command -v jq >/dev/null || die "jq is needed"
+
+mkdir -p "$out/raw"
+out=$(cd "$out" && pwd)
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+commit=$(git -C "$root" rev-parse HEAD)
+
+# A copy of the commit for each tool, so a tool that writes cannot touch the checkout, and
+# Strix (whose sandbox mounts its copy writable) cannot plant text for the Claude run.
+for copy in src-strix src-claude; do
+  mkdir -p "$work/$copy"
+  git -C "$root" archive "$commit" | tar -x -C "$work/$copy"
+done
+cat >"$work/brief.txt" <<B
+Security audit of the folder '$scope' of this repository (commit $commit).
+Scope: '$scope' only. Other folders are context, not targets.
+The threat model and the severity scale are in $threat.
+Report only exploitable vulnerabilities with a concrete attacker, boundary and impact.
+There is no live deployment to test. Do not contact any host outside your own sandbox or this machine.
+B
+
+run_strix() {
+  mkdir -p "$work/strix" "$work/home"
+  (
+    cd "$work/strix"
+    # Strix saves the key in ~/.strix: give it a HOME that the EXIT trap removes. Keep the
+    # caches and the Docker login where they are.
+    export UV_CACHE_DIR="${UV_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/uv}"
+    [[ -n "${DOCKER_CONFIG:-}" || ! -d "$HOME/.docker" ]] || export DOCKER_CONFIG="$HOME/.docker"
+    export HOME="$work/home"
+    unset ODEV_TOKEN GH_TOKEN GITHUB_TOKEN
+    export STRIX_NO_UPDATE_CHECK=1 LITELLM_LOCAL_MODEL_COST_MAP=True
+    export STRIX_TELEMETRY=0 STRIX_IMAGE="$STRIX_SANDBOX" STRIX_LLM="anthropic/$model" LLM_API_KEY="$SECURITY_LLM_KEY" LLM_API_BASE="$SECURITY_LLM_BASE"
+    rc=0
+    timeout 3600 uvx --from "strix-agent==$STRIX_VERSION" strix -n -m standard --max-budget "$share" \
+      -t "$work/src-strix/$scope" --instruction-file "$work/brief.txt" >"$out/raw/strix.log" 2>&1 || rc=$?
+    ((rc == 0 || rc == 2)) # exit 2 means "found something"
+  ) || die "strix failed; see $out/raw/strix.log"
+  mkdir -p "$out/raw/strix"
+  cp -r "$work"/strix/strix_runs/*/. "$out/raw/strix/" || die "strix wrote no run folder"
+}
+
+run_cloudflare() {
+  local skill="$work/skill" proj="$work/cf"
+  local skilldir="$proj/.claude/skills/security-audit" # the skill runs only its two validators in Bash
+  git clone -q https://github.com/cloudflare/security-audit-skill "$skill"
+  git -C "$skill" checkout -q "$CLOUDFLARE_SKILL_COMMIT"
+  [[ "$(git -C "$skill" rev-parse HEAD)" == "$CLOUDFLARE_SKILL_COMMIT" ]] || die "the skill is not at its pinned commit"
+  mkdir -p "$proj/.claude/skills" "$out/raw/cloudflare"
+  cp -r "$skill/skills/security-audit" "$proj/.claude/skills/security-audit"
+  {
+    printf 'Run the security-audit skill in full audit mode.\nTarget: %s\nOutput directory: %s\n' "$work/src-claude" "$out/raw/cloudflare"
+    printf 'Spend at most %s agent runs in all.\n\n' "$agent_runs"
+    cat "$work/brief.txt"
+  } >"$work/prompt.txt"
+  (
+    cd "$proj"
+    unset ODEV_TOKEN GH_TOKEN GITHUB_TOKEN
+    # Claude Code removes ANTHROPIC_API_KEY from the environment of the commands it runs;
+    # the job's own name for the key must not reach them either.
+    export CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1
+    export ANTHROPIC_BASE_URL="$SECURITY_LLM_BASE" ANTHROPIC_API_KEY="$SECURITY_LLM_KEY" CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
+    unset SECURITY_LLM_KEY SECURITY_LLM_BASE
+    # Writes go to the output folder only (an Edit rule covers Write too), so a prompt
+    # injection cannot plant a script that the validator rule below would run.
+    timeout 3600 claude -p "$(cat "$work/prompt.txt")" --model "$model" --max-budget-usd "$share" \
+      --allowedTools Read Glob Grep Task Agent "Edit(/$out/raw/cloudflare/**)" \
+      "Bash(node $skilldir/validate-*.cjs:*)" "Bash(node .claude/skills/security-audit/validate-*.cjs:*)" \
+      --add-dir "$work/src-claude" "$out/raw/cloudflare" \
+      >"$out/raw/cloudflare.log" 2>&1
+  ) || die "the skill run failed; see $out/raw/cloudflare.log"
+}
+
+[[ "$tool" == cloudflare ]] || run_strix
+[[ "$tool" == strix ]] || run_cloudflare
+
+# One finding shape for both tools. The fingerprint names the place and the kind of defect,
+# not the wording, which changes from run to run. It is a hash, made below: jq has none.
+strix_rows() {
+  [[ -f "$out/raw/strix/vulnerabilities.json" ]] || return 0
+  jq -c '.[] | {tool: "strix", severity: (.severity // "unrated"), title: .title,
+    location: ((.code_locations // [])[0].file // .endpoint // .target // ""),
+    key: (((.code_locations // [])[0].file // .endpoint // "") + "|" + (.cwe // (.title | ascii_downcase | gsub("[^a-z0-9]+"; " ")))),
+    body: ("**Strix finding**\n\n" + (.description // "") + "\n\n**Impact.** " + (.impact // "") + "\n\n**Fix.** " + (.remediation_steps // ""))}' \
+    "$out/raw/strix/vulnerabilities.json"
+}
+cloudflare_rows() {
+  [[ -f "$out/raw/cloudflare/findings.json" ]] || return 0
+  jq -c '.[] | select(.verdict == "confirmed" or .verdict == "needs_validation") | {tool: "cloudflare",
+    severity: (.severity // "needs-validation"), title: .title, location: (.fingerprint // ""), key: (.fingerprint // .title),
+    body: ("**Cloudflare security-audit finding** (" + .verdict + ")\n\n" + (.description // "") + "\n\n"
+      + (if .remediation then "**Fix.** " + (.remediation | tostring) else "**To check.** " + ((.validation_plan // "") | tostring) end))}' \
+    "$out/raw/cloudflare/findings.json"
+}
+{
+  [[ "$tool" == cloudflare ]] || strix_rows
+  [[ "$tool" == strix ]] || cloudflare_rows
+} | while IFS= read -r row; do
+  fp=$(jq -r '.tool + "|" + .key' <<<"$row" | sha256sum | cut -c1-16)
+  jq -c --arg fp "$fp" 'del(.key) | .fingerprint = $fp' <<<"$row"
+done | jq -sc --arg commit "$commit" '{schema: 1, commit: $commit, tools: (map(.tool) | unique), findings: unique_by(.fingerprint)}' >"$out/findings.json"
+
+# The key must be in nothing that was written.
+# The key goes to grep by file, not as an argument that ps shows.
+if grep -rqF -f <(printf '%s\n' "$SECURITY_LLM_KEY") "$out"; then
+  rm -f "$out/findings.json" "$out/raw/cloudflare/findings.json" "$out/raw/strix/vulnerabilities.json"
+  die "the LLM key was found in the output; $out must not be kept or shared"
+fi
+printf 'security-review: %s findings in %s/findings.json\n' "$(jq '.findings | length' "$out/findings.json")" "$out"

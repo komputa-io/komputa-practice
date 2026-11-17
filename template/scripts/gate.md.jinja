@@ -85,6 +85,19 @@ Change them in the project template (komputa-practice).
   the digest with the other image pins, and only to an image seven days old or more.
 - On OneDev the job reads the secret `ONEDEV_ISSUES_TOKEN`, as the Deslop nightly does.
 
+## The security review
+
+- The job "Security review" (`scripts/security-review.sh`, pins in `scripts/security.pin`) holds an
+  LLM key, so the key must be out of reach of other branches. A branch can edit the workflow and the
+  script, so their branch guards are not enough.
+- GitHub: create the environment `security-review` once, limit its deployment branches to
+  `{{ default_branch }}`, and put `SECURITY_LLM_KEY` and `SECURITY_LLM_BASE` in it, not in the repo
+  secrets.
+- OneDev: limit the job secrets to the default branch: `odev secret set ... --branches {{ default_branch }}`.
+- The runner or executor labelled `security` serves private repos only. On a public repo the
+  artifact is open to any signed-in user, and a fork pull request can reach a self-hosted runner.
+  The job refuses a public GitHub repo, and no issue is filed there.
+
 ## The repo's own checks
 
 - Do not add another gate script.

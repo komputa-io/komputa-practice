@@ -1,0 +1,13 @@
+# The tools that scripts/security-review.sh runs, pinned. Exact versions, each at
+# least 7 days old; the image by digest, the skill by commit. Never a tag or latest:
+# a security tool runs with the job's LLM key. scripts/update-deps.sh does not move
+# these: raise one by hand, in a PR, after reading what changed.
+# Seeded once; the repo owns it.
+STRIX_VERSION=1.7.0
+# pragma: allowlist nextline secret
+STRIX_SANDBOX=ghcr.io/usestrix/strix-sandbox@sha256:f6906c3114e504fd1a218fcf028d7a0e46851118403a438b63956de6ea7c4331
+# pragma: allowlist nextline secret
+CLOUDFLARE_SKILL_COMMIT=c1c8a8c1471069fb0e188eeaff69b8e8db6564a8
+# The models Strix's LiteLLM can price at this STRIX_VERSION (an unpriced model counts as $0,
+# so --max-budget never trips). Add one only after you check its price there.
+PRICED_MODELS="claude-opus-5-5"

@@ -400,6 +400,72 @@ jobs:
   maxRetries: 0
   timeout: 1800
 
+{%- if security_review %}
+
+# The Security review: Strix and the Cloudflare security-audit skill over the source (pins in
+# scripts/security.pin), and one confidential issue for each finding. Run it by hand, and on
+# day {{ 1 + schedule_slot % 28 }} of each month at {{ '%02d:%02d' | format(nightly_hour, nightly_minute) }} (schedule_slot {{ schedule_slot }}). It runs on {{ default_branch }} only: the job holds an LLM
+# key, and code on another branch could carry a prompt injection that leaks it. The real
+# guard is the job's three values below: limit each to the default branch (--branches
+# {{ default_branch }}), because a branch can edit the step and the scripts. `jobExecutor: security` keeps it
+# off the shared executors (the first executor that matches would run it): `security` is a
+# Remote Shell Executor on a host that nothing else uses, with Docker for Strix, so the commands
+# run on that host, not in a container. Set the job secrets once, from your own shell:
+#   {{ vault_command }} <item> | odev secret set SECURITY_LLM_KEY --branches {{ default_branch }}
+#   odev secret set SECURITY_LLM_BASE --branches {{ default_branch }}   (https://api.anthropic.com on stdin)
+#   {{ vault_command }} <item> | odev secret set ONEDEV_ISSUES_TOKEN --branches {{ default_branch }}   (as for the Deslop nightly)
+- name: Security review
+  jobExecutor: security
+  steps:
+  - !CheckoutStep
+    name: Checkout
+    cloneCredential: !DefaultCredential {}
+    withLfs: false
+    withSubmodules: false
+    condition: ALL_PREVIOUS_STEPS_WERE_SUCCESSFUL
+  - !CommandStep
+    name: Scan and file
+    runInContainer: false
+    interpreter: !ShellInterpreter
+      shell: bash
+      commands: |
+        set -e
+        export SECURITY_REF='@branch@' SECURITY_DEFAULT_BRANCH='{{ default_branch }}'
+        scripts/security-review.sh --apply --budget {{ security_budget_usd }} --threat-model '{{ threat_model }}'
+    envVars:
+    - name: SECURITY_LLM_KEY
+      value: '@secret:SECURITY_LLM_KEY@'
+    - name: SECURITY_LLM_BASE
+      value: '@secret:SECURITY_LLM_BASE@'
+    useTTY: false
+    condition: ALL_PREVIOUS_STEPS_WERE_SUCCESSFUL
+  - !CommandStep
+    name: File the issues
+    runInContainer: false
+    interpreter: !ShellInterpreter
+      shell: bash
+      commands: |
+        set -e
+        export ODEV_HOST='@server_url@' ODEV_PROJECT='@project_path@'
+        scripts/security-issues.sh --forge onedev --findings security-review-out/findings.json --post
+    envVars:
+    - name: ODEV_TOKEN
+      value: '@secret:ONEDEV_ISSUES_TOKEN@'
+    useTTY: false
+    condition: ALL_PREVIOUS_STEPS_WERE_SUCCESSFUL
+  - !PublishArtifactStep
+    name: Keep the findings
+    sourcePath: security-review-out
+    artifacts: findings.json
+    condition: ALWAYS
+  triggers:
+  - !ScheduleTrigger
+    cronExpression: 0 {{ nightly_minute }} {{ nightly_hour }} {{ 1 + schedule_slot % 28 }} * ?
+  retryCondition: never
+  maxRetries: 0
+  timeout: 7200
+{%- endif %}
+
 # Weekly, on {{ ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'][weekly_day] }} at {{ '%02d:%02d' | format(weekly_hour, weekly_minute) }}: refresh dependencies within their ranges and open a PR. Needs two
 # job secrets on main, from an account that can push a branch and open a pull
 # request: ONEDEV_USER (its login) and ONEDEV_TOKEN (its access token). OneDev

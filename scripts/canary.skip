@@ -1,0 +1,3 @@
+# Jobs the canary run never starts, one per line: job name | reason. A job here costs money on each run.
+Security review | costs 20 to 40 dollars a run (Strix and an LLM)
+security-review.yml | costs 20 to 40 dollars a run (Strix and an LLM)

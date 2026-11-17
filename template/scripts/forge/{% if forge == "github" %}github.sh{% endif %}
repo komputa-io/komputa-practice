@@ -22,6 +22,10 @@
 #       MARKER, or nothing. Needs jq
 #   scripts/forge/github.sh issue-create-high TITLE BODY
 #       open an issue labelled `priority: high` (the label must exist in the repo)
+#   scripts/forge/github.sh repo-public
+#       print yes when anyone can read the repo's issues, else no
+#   scripts/forge/github.sh issue-create-security TITLE BODY
+#       open an issue labelled `security` (the label is made when missing)
 set -Eeuo pipefail
 shopt -s inherit_errexit
 trap 'printf "%s: line %d: %s exited %d\n" "${0##*/}" "$LINENO" "$BASH_COMMAND" "$?" >&2' ERR
@@ -30,7 +34,7 @@ die() {
   exit 1
 }
 usage() {
-  printf 'usage: scripts/forge/github.sh check | open-update-prs | pr-create BRANCH TITLE DESCRIPTION | pr-edit NUMBER TITLE DESCRIPTION | pr-close NUMBER NOTE | auto-merge NUMBER SHA | issue-marked MARKER | issue-create-high TITLE BODY\n' >&2
+  printf 'usage: scripts/forge/github.sh check | open-update-prs | pr-create BRANCH TITLE DESCRIPTION | pr-edit NUMBER TITLE DESCRIPTION | pr-close NUMBER NOTE | auto-merge NUMBER SHA | issue-marked MARKER | issue-create-high TITLE BODY | repo-public | issue-create-security TITLE BODY\n' >&2
   exit 2
 }
 
@@ -70,17 +74,35 @@ auto_merge() {
   gh pr merge "$1" --auto --merge --match-head-commit "$2"
 }
 
-# issue_marked MARKER: "NUMBER STATE" of the first issue that holds MARKER.
+# issue_marked MARKER: "NUMBER STATE" of the first issue whose first line is MARKER.
 issue_marked() {
   check
   MARKER=$1 gh api --paginate "repos/{owner}/{repo}/issues?state=all&per_page=100" \
-    --jq '.[] | select(.pull_request == null and ((.body // "") | contains(env.MARKER))) | "\(.number) \(.state)"' \
+    --jq '.[] | select(.pull_request == null and ((.body // "") | (split("\n")[0] | rtrimstr("\r")) == env.MARKER)) | "\(.number) \(.state)"' \
     | awk 'NR == 1' || die "could not list the issues"
 }
 
 issue_create_high() {
   check
   printf '%s' "$2" | gh api -X POST "repos/{owner}/{repo}/issues" -f "title=$1" -F body=@- -f 'labels[]=priority: high' >/dev/null
+}
+
+repo_public() {
+  check
+  local flag
+  flag=$(gh api "repos/{owner}/{repo}" --jq .private) || die "could not read the repo's private flag"
+  case "$flag" in
+    false) echo yes ;;
+    true) echo no ;;
+    *) die "unexpected private flag: $flag" ;;
+  esac
+}
+
+issue_create_security() {
+  check
+  # The label may not exist yet; a second creation answers 422, which is fine.
+  gh api -X POST "repos/{owner}/{repo}/labels" -f name=security -f color=b60205 >/dev/null 2>&1 || true
+  printf '%s' "$2" | gh api -X POST "repos/{owner}/{repo}/issues" -f "title=$1" -F body=@- -f 'labels[]=security' >/dev/null
 }
 
 case "${1-}" in
@@ -115,6 +137,14 @@ case "${1-}" in
   issue-create-high)
     (($# == 3)) || usage
     issue_create_high "$2" "$3"
+    ;;
+  repo-public)
+    (($# == 1)) || usage
+    repo_public
+    ;;
+  issue-create-security)
+    (($# == 3)) || usage
+    issue_create_security "$2" "$3"
     ;;
   *) usage ;;
 esac

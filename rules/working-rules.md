@@ -71,11 +71,15 @@ add a check, add its row. When a mistake can no longer happen, drop its rule.
 | A merge needs green checks at the head | Branch protection on `main` requires the `check`, `template` and `docs` jobs |
 | A merged branch is deleted on the forge | The repo setting that deletes head branches on merge |
 | An operator command opens in a pane, not a `!` line | `skills/herdr/assets/operator-run.sh` refuses outside Herdr and is tested by `scripts/tests/operator-run.test.sh`; choosing it is prose |
-| A worker never blocks on a wait | `hooks/block-foreground-wait.sh` refuses a worker's foreground `gh pr checks --watch`, `gh run watch`, `watch`, `odev pr checks --wait`, `merge-on-green`, `hc wait` and `sleep` over 10 s (also after `do`, `then`, `{`, `!` and inside `bash -c`), and, in the background too, an `until` or `while` loop that sleeps with no `timeout` command; `scripts/tests` and `hooks/block-foreground-wait.test.sh` test it. The owner template fixes the stages; choosing to run `stall-watch` is prose |
+| A worker never blocks on a wait | `hooks/block-foreground-wait.sh` refuses a worker's foreground `gh pr checks --watch`, `gh run watch`, `watch`, `odev pr checks --wait`, `merge-on-green`, `hc wait` and `sleep` over 10 s (also after `do`, `then`, `{`, `!` and inside `bash -c`), and, in the background too and in every session (a lead and its subagents as well), an `until` or `while` loop that sleeps with no `timeout` command; `scripts/tests` and `hooks/block-foreground-wait.test.sh` test it. The owner template fixes the stages; choosing to run `stall-watch` is prose |
 | A PR's Deslop findings get a decision | The template's Duplicate code job fails while a duplicate the PR adds is neither fixed nor kept in `.deslop-decisions`; the template gate fails CI when the job no longer calls the check |
 | Every project keeps the CI pattern at its own slot | The template gate's shell section fails CI on drift; `scripts/audit-builds.py` lists every project and any shared schedule |
 | pstack for tier 2 and 3 work in an app or a command-line tool | The project's SessionStart hook reads `.claude/pstack-mandate.md`; the template gate fails CI when the hook is gone |
+| A template release is tagged only after its canary jobs pass | `scripts/release.sh` refuses without a canary pass record for that sha; using it, not a bare tag, is prose (`docs/release.md`) |
 | A source file over 5,000 tokens gets a refactor issue | The template's `scripts/gate.sh --fast` asks for the issue when a staged file passes the cap; opening it is prose |
+| A dependency with a known vulnerability does not merge | The template's `scripts/gate.sh` runs a Trivy filesystem scan of the lock files (Python, TypeScript, .NET) and fails on a finding; Rust keeps `cargo deny` |
+| A verified secret in git history is found | The template's `Secret scan nightly` job runs TruffleHog over the whole history with `--only-verified` and files each live secret as a high-priority issue |
+| A service or an app gets an agent security review | The template's `Security review` job (by hand and monthly, `main` only) runs Strix and the Cloudflare skill through `scripts/security-review.sh`; `scripts/security-issues.sh` files each finding as one issue. Running it before a milestone closes is prose |
 
 ## Rules
 
@@ -215,8 +219,9 @@ exist, in a reviewed pull request whose text lists what goes, so that the operat
 
 ## Build work
 
-- Every project holds the template's CI pattern: Deslop on each pull request,
-  the Deslop nightly and the weekly dependency refresh, at its own
+- Every project holds the template's CI pattern: Deslop and the Trivy gate on
+  each pull request, the Deslop nightly, the secret scan nightly and the weekly
+  dependency refresh, at its own
   `schedule_slot`. Give a new project a free slot (`scripts/audit-builds.py`
   lists them), so that no two projects on one server run at once.
 - A source file over 5,000 tokens (bytes / 4) is allowed. Documents (HTML,
@@ -235,7 +240,9 @@ exist, in a reviewed pull request whose text lists what goes, so that the operat
 - A project built in milestones states its threat model and severity scale
   (impact times likelihood) in its architecture doc, and gives each
   milestone one review and one fix round. After that, only a high finding
-  reopens it. Other findings follow the issue rule above.
+  reopens it. Other findings follow the issue rule above. A service or an app
+  runs the `Security review` job before a milestone closes and before a
+  deploy. Its findings get the milestone's one fix round, like any other.
 - Stacked PRs restack the way pstack's merge-safety reference says: push the
   agent's own branch with a lease that names the branch and the literal SHA
   it replaces (`--force-with-lease=refs/heads/<branch>:<sha>`). The git hook

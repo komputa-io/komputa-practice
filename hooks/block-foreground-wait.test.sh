@@ -10,12 +10,13 @@ trap 'rm -rf -- "$STUB"' EXIT
 printf '#!/bin/bash\n[[ $1 == get && -n ${STUB_HC-} ]] || exit 1\nprintf "%%s" "$STUB_HC"\n' >"$STUB/hc"
 chmod +x "$STUB/hc"
 
-check() { # check <want> <worker: 1|0> <command> [background: true|false]
-  local got err hcjson payload
+check() { # check <want> <worker: 1 | 0 a lead | - no hc terminal> <command> [background: true|false]
+  local got err hcjson payload term=t9
   RUN=$((RUN + 1))
   if [[ $2 == 1 ]]; then hcjson='{"parent":"t1","template":"owner"}'; else hcjson='{"parent":null,"template":null}'; fi
+  [[ $2 == - ]] && term=
   payload=$(jq -nc --arg c "$3" --argjson b "${4:-false}" '{tool_name: "Bash", tool_input: {command: $c, run_in_background: $b}}')
-  err=$(printf '%s' "$payload" | HC_TERMINAL_ID=t9 STUB_HC="$hcjson" PATH="$STUB:$PATH" "$HOOK" 2>&1 >/dev/null)
+  err=$(printf '%s' "$payload" | HC_TERMINAL_ID=$term STUB_HC="$hcjson" PATH="$STUB:$PATH" "$HOOK" 2>&1 >/dev/null)
   got=$?
   if [[ $got != "$1" ]]; then
     echo "FAIL want $1 got $got: ${3:0:200}"
@@ -59,7 +60,10 @@ check 0 1 'echo "sleep 40 and gh run watch"'
 check 0 1 'for i in 1 2 3; do sleep 5; done'
 check 0 1 'timeout 600 bash -c '"'"'while ! gh pr checks 12; do sleep 30; done'"'"'' true
 check 0 0 'gh pr checks 311 --watch'
-check 0 0 'until false; do sleep 1; done' true
+check 2 0 'until false; do sleep 1; done' true
+check 2 - 'until [ -s out ] && grep -q pass out; do sleep 20; done; cat out' true
+check 0 0 'timeout 600 bash -c '"'"'until false; do sleep 1; done'"'"'' true
+check 0 - 'gh pr checks 311 --watch'
 if ((FAIL == 0)); then echo "block-foreground-wait: $RUN checks passed"; else
   echo "block-foreground-wait: $FAIL of $RUN failed"
   exit 1

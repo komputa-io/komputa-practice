@@ -64,12 +64,23 @@ Use this guide to start using the practice in a repo that you already have. The 
    | `ONEDEV_TOKEN` | CI on main | Only with the `trust_green_ci` answer. A token that can read this project's builds, authorized on the default branch only |
    | `PKG_USER` and `PKG_TOKEN` | CI, CI on main, Update dependencies | Only with a private package index. A read-only account |
    | `NUGET_USER` and `NUGET_TOKEN` | CI, CI on main, Update dependencies | Only with a private NuGet feed. A read-only account |
+   | `SECURITY_LLM_KEY` and `SECURITY_LLM_BASE` | Security review | Only with the `security_review` answer. An Anthropic API key, and `https://api.anthropic.com`. No server caps the key: the job's `--budget` is the only limit on a run. Limited to the default branch, as below |
 
    The CI file also holds a nightly secret scan, at the same time as the Deslop nightly. TruffleHog reads the whole history of the default branch and keeps only secrets that still work. It tests each one by calling the provider that issued it, so the candidate leaves your CI runner for that provider. Each live secret becomes one high-priority issue that names the file, line and commit and never holds the value: on GitHub, create the label `priority: high` first; on OneDev, the Priority field needs the value `Major`. The tool's image is pinned by digest, and the weekly dependency job moves the pin. A OneDev repo made before this job existed must copy the "Secret scan nightly" job from the template: the full gate names it as missing.
 
    CI itself needs no secret unless you use a private index or feed. On GitHub the workflows use repository secrets of the same names where they need any.
 
    On GitHub, the weekly refresh also needs the repository secret `DEPS_PR_TOKEN`: a fine-grained personal access token with Contents, Pull requests and Workflows read and write on that repo. Only the job that opens the pull request reads it, and the pull request's own gate then runs. Set it with `scripts/set-deps-pr-token.sh --apply owner/repo`. Turn on the repository setting "Allow auto-merge". The setting "Allow GitHub Actions to create and approve pull requests" is not needed.
+
+   The CI file runs three security scans. The `house-delivery` [skill](/reference/skills) gives the rules for each one.
+
+   | Scan | When it runs | What it finds |
+   |---|---|---|
+   | Trivy, in `scripts/gate.sh` | Each pull request | A known vulnerability in a dependency, from the Python, TypeScript and .NET lock files. Rust keeps `cargo deny` |
+   | TruffleHog | Each night | A verified secret anywhere in the git history |
+   | The `Security review` job: Strix and the Cloudflare security-audit skill | By hand and once a month, on `main` only, for a service or an app | Flaws that an agent finds when it reads the code. `scripts/security-issues.sh` files each finding as one issue |
+
+   The `Security review` job needs its own scan host, because Strix needs the Docker socket and the job holds an LLM key. Give the host a GitHub runner with the labels `self-hosted, security` that serves private repos only, or a OneDev job executor named `security`. Limit the job's secrets to the default branch: on OneDev, `odev secret set ... --branches main`; on GitHub, put them in an environment named `security-review` that only the default branch can use, not in repository secrets. Run the job before a milestone closes and before a deploy.
 
 7. **Open a pull request** with the template's files, the folded checks and the CI file. Merge it when the gate is green on its head commit.
 

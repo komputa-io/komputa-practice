@@ -7,6 +7,7 @@
   {"query": "what naming pattern should these Azure resources use in the bicep?", "should_trigger": true},
   {"query": "should the build agents be long lived or fresh per job? client is on Azure DevOps", "should_trigger": true},
   {"query": "add a ZAP scan to the pipeline and get the findings into the tracker", "should_trigger": true},
+  {"query": "add a TruffleHog nightly and pin the Trivy version in the gate", "should_trigger": true},
   {"query": "the deploy job has a long lived service principal secret, how should it authenticate instead?", "should_trigger": true},
   {"query": "we rebuild the image for staging and prod, change the pipeline to promote it", "should_trigger": true},
   {"query": "turn the dev environment off at night and at weekends, it costs too much", "should_trigger": true},

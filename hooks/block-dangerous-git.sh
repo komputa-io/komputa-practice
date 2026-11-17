@@ -233,9 +233,10 @@ split_words() {
     bare = $0
     gsub(/["\047\\]/, "", bare)
     if (bare !~ keep) next
-    n = length($0); w = ""; have = 0; q = ""
+    # substr() on $0 rescans the record in gawk, which made a long command quadratic (issue #340).
+    line = $0; n = length(line); w = ""; have = 0; q = ""
     for (i = 1; i <= n; i++) {
-      c = substr($0, i, 1); nx = substr($0, i + 1, 1)
+      c = substr(line, i, 1); nx = substr(line, i + 1, 1)
       if (q == "\047") { if (c == "\047") q = ""; else w = w c; continue }
       if (q == "$\047") {
         if (c == "\\") { w = w nx; i++; continue }

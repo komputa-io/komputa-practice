@@ -5,7 +5,9 @@
 # (also after `;`, `&&`, `|`, `do`, `then`, `{`, `!`, in front of `timeout N`, or in a `bash -c` body), `watch`, and
 # `odev pr checks --wait`. The fix it names: run the command as a background command.
 # It also refuses, in the background too, an `until` or `while` loop that sleeps, in a call with no `timeout` command.
-# It acts only in a worker, an hc terminal started from a template or by a parent, as block-operator-screen.sh does.
+# That loop check acts in every session, a lead and its Agent subagents too: such a loop can outlive the work it
+# waits for. The other checks act only in a worker, an hc terminal started from a template or by a parent, as
+# block-operator-screen.sh does.
 # Exit 2 refuses with one BLOCKED line. Any other failure refuses too, as in the other gates.
 set -uo pipefail
 # shellcheck disable=SC2329 # run by the EXIT trap
@@ -18,10 +20,11 @@ on_exit() {
 }
 trap on_exit EXIT
 
-[[ -n ${HC_TERMINAL_ID-} ]] || exit 0
-command -v jq >/dev/null || exit 1
-me=$(hc get "$HC_TERMINAL_ID" --json 2>/dev/null) || exit 1
-jq -e '.template != null or .parent != null' <<<"$me" >/dev/null || exit 0
+# Outside an hc terminal a missing jq lets the call through; in one it refuses, as before.
+command -v jq >/dev/null || {
+  [[ -z ${HC_TERMINAL_ID-} ]] && exit 0
+  exit 1
+}
 
 refuse() {
   local what=${1//[$'\n\r\t']/ }
@@ -48,6 +51,10 @@ if [[ $cmd =~ $unbounded && $cmd == *sleep\ * && ! $cmd =~ $bound ]]; then
   echo "BLOCKED [wait gate]: an until or while loop that sleeps, with no timeout, can run for ever. Wrap it in 'timeout N bash -c ...' as a background command (run_in_background), and go on working." >&2
   exit 2
 fi
+# The checks below are for a worker only.
+[[ -n ${HC_TERMINAL_ID-} ]] || exit 0
+me=$(hc get "$HC_TERMINAL_ID" --json 2>/dev/null) || exit 1
+jq -e '.template != null or .parent != null' <<<"$me" >/dev/null || exit 0
 [[ $background == true ]] && exit 0
 waiting="${start}(gh[[:space:]]+pr[[:space:]]+checks[^;&|$nl]*--watch|gh[[:space:]]+run[[:space:]]+watch|watch[[:space:]]|odev[^;&|$nl]*(pr[[:space:]]+checks|build[[:space:]]+(run|rerun))[^;&|$nl]*--wait([[:space:]]|\$)|([^[:space:];&|]*/)?merge-on-green(\.sh)?([[:space:]]|\$)|hc[[:space:]]+wait([[:space:]]|\$))"
 if [[ $cmd =~ $waiting ]]; then

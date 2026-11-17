@@ -182,6 +182,7 @@ def test_rendered_scripts_pass_shellcheck_and_shfmt(tmp_path, name):
         out / "scripts/trufflehog-scan.sh",
         out / "scripts/trufflehog-issues.sh",
         out / ".githooks/pre-commit",
+        *out.glob("scripts/security-*.sh"),
         *out.glob("scripts/install-cargo-deny.sh"),
         *out.glob("scripts/install-trivy.sh"),
         *out.glob("scripts/forge/*.sh"),
@@ -2898,6 +2899,130 @@ def test_the_github_open_pr_step_stages_the_patch_of_either_artifact_layout(tmp_
     )
     assert done.returncode == 0, done.stderr
     assert done.stdout.startswith("M  "), done.stdout
+
+
+SECURITY_FILES = [
+    "scripts/security.pin",
+    "scripts/security-review.sh",
+    "scripts/security-issues.sh",
+]
+
+
+def test_the_security_review_job_is_on_by_answer_and_runs_on_the_default_branch_only(tmp_path):
+    """The job holds an LLM key: it names the security executor and refuses other refs."""
+    gh = render(tmp_path / "gh", ["shell"], forge="github", security_review=True, kind="service")
+    flow = (gh / ".github/workflows/security-review.yml").read_text()
+    assert "runs-on: [self-hosted, security]" in flow and "workflow_dispatch" in flow
+    parsed = yaml.safe_load(flow)  # a workflow that does not parse never runs
+    review = parsed["jobs"]["security-review"]
+    assert review["steps"] and review["environment"] == "security-review"
+    assert "github.event.repository.private" in review["if"] and "refs/heads/main" in review["if"]
+    assert parsed["jobs"]["file-issues"]["steps"]
+    od = render(tmp_path / "od", ["shell"], security_review=True, kind="service")
+    spec = yaml.load((od / ".onedev-buildspec.yml").read_text(), Loader=SpecLoader)
+    job = next(j for j in spec["jobs"] if j["name"] == "Security review")
+    assert job["jobExecutor"] == "security"
+    assert all((od / f).is_file() for f in SECURITY_FILES)
+    pin = (od / "scripts/security.pin").read_text()
+    assert "STRIX_SANDBOX=ghcr.io/usestrix/strix-sandbox@sha256:" in pin
+    off = render(tmp_path / "off", ["shell"], security_review=False)
+    assert not any((off / f).exists() for f in SECURITY_FILES)
+    assert "Security review" not in (off / ".onedev-buildspec.yml").read_text()
+    lib = render(tmp_path / "lib", ["shell"], kind="library")
+    assert not (lib / "scripts/security-review.sh").exists()
+
+
+def test_the_security_review_script_refuses_other_branches_and_a_missing_budget(tmp_path):
+    out = render(tmp_path / "p", ["shell"], security_review=True, kind="service")
+    env = {k: v for k, v in os.environ.items() if k not in ("GITHUB_REF_NAME", "SECURITY_REF")}
+    run = lambda *a: subprocess.run(
+        ["scripts/security-review.sh", *a], cwd=out, capture_output=True, text=True, env=env
+    )
+    assert "dry run" in run("--budget", "10").stdout
+    assert "--budget" in run().stderr and run().returncode == 1
+    git(out, "checkout", "-q", "-b", "feat/x")
+    refused = run("--budget", "10", "--apply")
+    assert refused.returncode == 1 and "main only" in refused.stderr
+
+
+def test_security_findings_are_not_filed_on_a_public_github_repo(tmp_path):
+    out = render(tmp_path / "p", ["shell"], forge="github", security_review=True, kind="service")
+    stub = tmp_path / "bin"
+    stub.mkdir()
+    (stub / "gh").write_text('#!/bin/sh\ncase "$*" in *--jq*private*) echo false;; esac\n')
+    (stub / "gh").chmod(0o755)
+    findings = out / "f.json"
+    findings.write_text(
+        '{"schema":1,"findings":[{"fingerprint":"ab12","title":"t","body":"b","tool":"strix","severity":"low","location":"x"}]}'
+    )
+    done = subprocess.run(
+        ["scripts/security-issues.sh", "--findings", "f.json", "--forge", "github", "--post"],
+        cwd=out,
+        capture_output=True,
+        text=True,
+        env={**os.environ, "PATH": f"{stub}:{os.environ['PATH']}"},
+    )
+    assert done.returncode == 1 and "repo is public" in done.stderr
+
+
+def _security_post(out, stub_body, findings, tmp_path):
+    stub = tmp_path / "bin"
+    stub.mkdir(exist_ok=True)
+    (stub / "gh").write_text(stub_body)
+    (stub / "gh").chmod(0o755)
+    (out / "f.json").write_text(json.dumps({"schema": 1, "findings": findings}))
+    return subprocess.run(
+        ["scripts/security-issues.sh", "--findings", "f.json", "--forge", "github", "--post"],
+        cwd=out,
+        capture_output=True,
+        text=True,
+        env={**os.environ, "PATH": f"{stub}:{os.environ['PATH']}"},
+    )
+
+
+def _finding(fp, body="b"):
+    return {
+        "fingerprint": fp,
+        "title": "t",
+        "body": body,
+        "tool": "strix",
+        "severity": "low",
+        "location": "x",
+    }
+
+
+def test_a_failed_public_repo_lookup_files_nothing(tmp_path):
+    out = render(tmp_path / "p", ["shell"], forge="github", security_review=True, kind="service")
+    log = tmp_path / "calls"
+    stub = f'#!/bin/sh\necho "$*" >> {log}\ncase "$*" in *--jq*private*) exit 1;; esac\n'
+    done = _security_post(out, stub, [_finding("ab12")], tmp_path)
+    assert done.returncode == 1 and "public" in done.stderr
+    assert "-X POST" not in log.read_text()
+
+
+def test_a_decoy_carrying_another_findings_marker_does_not_hide_it(tmp_path):
+    out = render(tmp_path / "p", ["shell"], forge="github", security_review=True, kind="service")
+    marker = "<!-- security-review: real1 -->"
+    issues = [
+        {"number": 1, "state": "open", "body": f"<!-- security-review: decoy -->\nx {marker}"}
+    ]
+    (tmp_path / "issues.json").write_text(json.dumps(issues))
+    sent = tmp_path / "sent"
+    # A fake gh: it applies the --jq filter itself, and keeps the body of each issue posted.
+    stub = (
+        "#!/bin/sh\n"
+        'case "$*" in\n'
+        "  *--jq*private*) echo true;;\n"
+        f'  *--paginate*) while [ $# -gt 0 ]; do [ "$1" = --jq ] && jq -r "$2" {tmp_path}/issues.json; shift; done;;\n'
+        f'  *"-X POST"*issues*) cat >> {sent};;\n'
+        "esac\n"
+    )
+    hostile = _finding("decoy2", f"{marker} @victim <!--")
+    done = _security_post(out, stub, [_finding("real1"), hostile], tmp_path)
+    assert done.returncode == 0, done.stderr
+    text = sent.read_text()
+    assert "<!-- security-review: real1 -->" in text  # the decoy did not hide the real finding
+    assert text.count(marker) == 1 and "@victim" not in text  # the hostile text cannot forge one
 
 
 # (t) The nightly secret scan files an issue for each live secret, and no value reaches it or the log.
