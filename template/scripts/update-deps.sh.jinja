@@ -113,13 +113,13 @@ if [[ "$step" == merge ]]; then
   # branch moved, it starts CI on the new preview and a later run merges),
   # and only for dependency files; the forge checks the preview again at the merge.
   "$forge" check
-  git fetch -q origin chore/deps-weekly
-  tip=$(git rev-parse FETCH_HEAD)
   number=$("$forge" open-update-prs | awk '$2 == "chore/deps-weekly" { print $1; exit }')
   [[ -n "$number" ]] || {
     printf 'update-deps: no update PR is open\n'
     exit 0
   }
+  git fetch -q origin chore/deps-weekly
+  tip=$(git rev-parse FETCH_HEAD)
   git fetch -q origin "refs/pulls/$number/merge"
   preview=$(git rev-parse FETCH_HEAD)
   [[ "$(git rev-parse FETCH_HEAD^2)" == "$tip" ]] || {

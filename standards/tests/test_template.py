@@ -1721,6 +1721,20 @@ def test_onedev_merges_a_green_dependency_pr_only_while_ci_passed_on_its_current
         assert '"jobName": "CI"' in started and '"jobName": "Duplicate code"' in started
 
 
+def test_onedev_merge_job_passes_when_no_update_branch_exists(tmp_path):
+    """#383: the daily job runs most days after the merged branch was deleted."""
+    out, _, env = _refreshable(tmp_path)
+    done = subprocess.run(
+        [str(out / "scripts/update-deps.sh"), "--merge-ready"],
+        cwd=out,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert "no update PR is open" in done.stdout
+
+
 def test_the_github_refresh_runs_one_at_a_time_and_never_cancels_a_running_one(tmp_path):
     out = render(tmp_path / "p", ["shell"], forge="github")
     wf = yaml.safe_load((out / ".github/workflows/update-deps.yml").read_text())
