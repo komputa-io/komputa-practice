@@ -9,7 +9,9 @@ schedule_slot (copier.yml), so that projects on one server do not run at once.
 It prints one line for each project: its template version, its slot, which of
 the three it holds, and its two schedules. Then it names each pair of projects
 that share a schedule, and the lowest free slots. A project whose description
-starts with [ARCHIVED is named once and not checked.
+starts with [ARCHIVED is named once and not checked. On OneDev it also
+reads the branch protection: the first enabled rule for the default branch,
+the project's own and then each parent's, must require `Duplicate code`.
 
 Read only. It lists OneDev projects with odev, and reads the two files it needs
 from each default branch through the OneDev repository files API (no clone).
@@ -28,6 +30,7 @@ import subprocess
 import sys
 from collections import defaultdict
 from dataclasses import dataclass, field, replace
+from fnmatch import fnmatch
 from pathlib import Path
 
 JOBS = ("Duplicate code", "Deslop nightly", "Update dependencies")
@@ -41,10 +44,11 @@ class Project:
     held: tuple[str, ...]
     schedules: dict[str, str] = field(default_factory=dict)
     archived: bool = False
+    guarded: bool | None = None  # the default branch requires Duplicate code; None when not read
 
     @property
     def conforms(self) -> bool:
-        return self.template != "none" and len(self.held) == len(JOBS)
+        return self.template != "none" and len(self.held) == len(JOBS) and self.guarded is not False
 
 
 def run(*args: str, cwd: Path | None = None) -> str:
@@ -77,9 +81,29 @@ def onedev_project(spec: str, copier: str, name: str) -> Project:
     return Project(name, *answers(copier), tuple(held), schedules)
 
 
+def guards(rules: dict[str, list[dict]], path: str, branch: str) -> bool:
+    """Whether the first enabled rule for the branch, the project's own and then each parent's, requires Duplicate code."""
+    parts = path.split("/")
+    for depth in range(len(parts), 0, -1):
+        for rule in rules.get("/".join(parts[:depth]), []):
+            if rule.get("enabled") and any(
+                fnmatch(branch, b) for b in rule.get("branches", "").split()
+            ):
+                return JOBS[0] in (rule.get("jobNames") or [])
+    return False
+
+
 def onedev(host: str) -> list[Project]:
     listed = json.loads(run("odev", "project", "list", "--host", host, "--limit", "1000", "--json"))
     archived = {p["path"] for p in listed if (p.get("description") or "").startswith("[ARCHIVED")}
+    rules = {
+        p["path"]: json.loads(
+            run("odev", "branch", "protection", "--host", host, "--project", p["path"], "--json")
+            or "[]"
+        )
+        for p in listed
+        if p["path"] not in archived
+    }
     found = []
     for p in listed:
         path = p["path"]
@@ -94,7 +118,13 @@ def onedev(host: str) -> list[Project]:
             return base64.b64decode(json.loads(body)["base64Content"]).decode() if body else ""
 
         project = onedev_project(show(".onedev-buildspec.yml"), show(".copier-answers.yml"), path)
-        found.append(replace(project, archived=path in archived))
+        found.append(
+            replace(
+                project,
+                archived=path in archived,
+                guarded=guards(rules, path, branch) if branch else None,
+            )
+        )
     return found
 
 
@@ -167,8 +197,12 @@ def report(everything: list[Project]) -> int:
     projects = [p for p in everything if not p.archived]
     gone = sorted(p.name for p in everything if p.archived)
     for p in sorted(projects, key=lambda p: p.name):
-        missing = [j for j in JOBS if j not in p.held]
-        state = "ok" if p.conforms else "MISSING " + ", ".join(missing or ["the template"])
+        missing = [j for j in JOBS if j not in p.held] or (
+            ["the template"] if p.template == "none" else []
+        )
+        if p.guarded is False:
+            missing.append("required Duplicate code")
+        state = "ok" if p.conforms else "MISSING " + ", ".join(missing)
         times = "; ".join(f"{j}: {c}" for j, c in p.schedules.items())
         print(f"{p.name:40} {p.template:8} slot {p.slot:>3}  {state:45} {times}")
     shared = defaultdict(list)

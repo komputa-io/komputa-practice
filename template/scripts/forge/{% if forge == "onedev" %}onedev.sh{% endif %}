@@ -24,7 +24,8 @@
 #       print "NUMBER STATE" of the first issue (open or closed) whose text holds
 #       MARKER, or nothing. Needs jq
 #   scripts/forge/onedev.sh issue-create-high TITLE BODY
-#       open an issue with Priority=Major (without that field value, the issue is filed with none and a warning)
+#       open an issue with Priority=Major and Triage=needs-triage; a field the
+#       project refuses is dropped, and OneDev's reason is shown
 #   scripts/forge/onedev.sh repo-public
 #       print yes when anyone can read the repo's issues, else no
 #   scripts/forge/onedev.sh issue-create-security TITLE BODY
@@ -221,33 +222,45 @@ issue_marked() {
   done
 }
 
+# A machine-filed issue is not triaged yet. A OneDev that requires the Triage
+# field refuses an issue without it; one without Priority=Major or Triage
+# refuses those. So each set below is tried in turn, and each refusal is shown.
+TRIAGE='"Triage": "needs-triage"'
+
 issue_create_high() {
-  local pid
   check
+  new_issue "$1" "$2" false "{\"Priority\": \"Major\", $TRIAGE}" "{$TRIAGE}" '{}'
+}
+
+new_issue() { # title, description, confidential (true or false), then field sets as JSON to try in turn
+  local title=$1 description=$2 confidential=$3 pid fields
+  shift 3
   pid=$(api "projects/ids/$ODEV_PROJECT")
   [[ "$pid" =~ ^[1-9][0-9]*$ ]] || die "OneDev has no project $ODEV_PROJECT"
-  # A project without the Priority field (or its Major value) refuses it: file without it and say so.
-  # shellcheck disable=SC2310 # the failure is handled here, on purpose
-  new_issue "$1" "$2" '{"Priority": "Major"}' "$pid" 2>/dev/null || {
-    printf 'forge: WARNING the project has no Priority=Major (or refused it); filing without it\n' >&2
-    new_issue "$1" "$2" '{}' "$pid"
-  }
+  for fields; do
+    # shellcheck disable=SC2310 # a refusal moves on to the next set
+    jq -n --argjson p "$pid" --arg t "$title" --arg d "$description" --argjson c "$confidential" --argjson f "$fields" \
+      '{title: $t, projectId: $p, description: $d, confidential: $c, fields: $f}' | post_issue && return 0
+  done
+  die "OneDev refused the issue with every field set"
 }
-new_issue() { # title, description, fields as JSON, project id
-  jq -n --argjson p "$4" --arg t "$1" --arg d "$2" --argjson f "$3" '{title: $t, projectId: $p, description: $d, fields: $f}' \
-    | api issues -X POST -H 'Content-Type: application/json' --data-binary @- >/dev/null
+
+# post_issue: POST the issue JSON on stdin. On a refusal it prints OneDev's
+# reason (the first 300 characters of its answer), which curl -f drops.
+post_issue() {
+  local answer
+  # shellcheck disable=SC2310 # the refusal is handled on the next line.
+  answer=$(api issues --fail-with-body -X POST -H 'Content-Type: application/json' --data-binary @-) && return 0
+  printf 'forge: OneDev refused the issue: %.300s\n' "$answer" >&2
+  return 1
 }
 
 # A OneDev issue is never public: the confidential flag below limits it further.
 repo_public() { echo no; }
 
 issue_create_security() {
-  local pid
   check
-  pid=$(api "projects/ids/$ODEV_PROJECT")
-  [[ "$pid" =~ ^[1-9][0-9]*$ ]] || die "OneDev has no project $ODEV_PROJECT"
-  jq -n --argjson p "$pid" --arg t "$1" --arg d "$2" '{title: $t, projectId: $p, description: $d, confidential: true, fields: {}}' \
-    | api issues -X POST -H 'Content-Type: application/json' --data-binary @- >/dev/null
+  new_issue "$1" "$2" true "{$TRIAGE}" '{}'
 }
 
 case "${1-}" in

@@ -368,7 +368,7 @@ jobs:
 
 # Nightly at {{ '%02d:%02d' | format(nightly_hour, nightly_minute) }} (the same slot as Deslop nightly): scan the whole history of the default branch
 # with TruffleHog for secrets that still work, and file one high-priority issue
-# (Priority=Major) for each. A sibling job, so a failure of one scan does not hide
+# (Priority=Major, Triage=needs-triage) for each. A sibling job, so a failure of one scan does not hide
 # the other. TruffleHog tests each candidate secret with the credential's own
 # provider, so the job needs outbound internet, and it sends the candidate to that
 # provider. The issue and the log never hold the secret value. The image is
