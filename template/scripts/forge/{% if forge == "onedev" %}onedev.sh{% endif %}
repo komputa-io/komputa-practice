@@ -49,14 +49,18 @@ check() {
     || die "set ODEV_HOST, ODEV_PROJECT and ODEV_TOKEN to open the PR"
 }
 
-# api PATH [curl args...]: one OneDev REST call. The token goes in a header
-# read from a file descriptor, so it is on no command line.
-api() {
-  local path=$1
-  shift
-  curl -fsS --max-time 30 -H @<(printf 'Authorization: Bearer %s\n' "$ODEV_TOKEN") "$@" \
+# request FAIL PATH [curl args...]: one OneDev REST call, with FAIL as curl's
+# failure flag (-f or --fail-with-body; curl 8.14 refuses both at once). The
+# token goes in a header read from a file descriptor, so it is on no command line.
+request() {
+  local fail=$1 path=$2
+  shift 2
+  curl "$fail" -sS --max-time 30 -H @<(printf 'Authorization: Bearer %s\n' "$ODEV_TOKEN") "$@" \
     "${ODEV_HOST%/}/~api/$path"
 }
+
+# api PATH [curl args...]: a request that prints nothing on an HTTP error.
+api() { request -f "$@"; }
 
 # json TEXT: TEXT as a JSON string body, without the quotes.
 json() {
@@ -250,7 +254,7 @@ new_issue() { # title, description, confidential (true or false), then field set
 post_issue() {
   local answer
   # shellcheck disable=SC2310 # the refusal is handled on the next line.
-  answer=$(api issues --fail-with-body -X POST -H 'Content-Type: application/json' --data-binary @-) && return 0
+  answer=$(request --fail-with-body issues -X POST -H 'Content-Type: application/json' --data-binary @-) && return 0
   printf 'forge: OneDev refused the issue: %.300s\n' "$answer" >&2
   return 1
 }

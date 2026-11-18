@@ -13,6 +13,11 @@ mkdir -p "$root/bin"
 # The stub answers the project id, and files an issue only when its fields hold Triage, as OneDev does.
 cat >"$root/bin/curl" <<'STUB'
 #!/usr/bin/env bash
+# curl 8.14 (the uv:trixie job image) refuses -f together with --fail-with-body.
+if [[ " $* " == *' --fail-with-body '* ]] && printf '%s\n' "$@" | grep -Eq '^-[a-zA-Z]*f[a-zA-Z]*$'; then
+  echo 'curl: option --fail-with-body: is badly used here' >&2
+  exit 2
+fi
 url=${*: -1}
 case $url in
   */projects/ids/*) echo 7 ;;
